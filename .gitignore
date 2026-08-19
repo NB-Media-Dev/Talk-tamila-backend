@@ -1,0 +1,15 @@
+# Don't upload Python cache files
+__pycache__/
+*.pyc
+
+# Don't upload the .env file (contains passwords/secrets!)
+.env
+
+# Don't upload virtual environment folder
+venv/
+.venv/
+env/
+
+# Don't upload IDE settings
+.vscode/
+.idea/
