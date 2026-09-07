@@ -1,0 +1,64 @@
+# docker-compose.yml
+# ────────────────────
+# Defines the services (containers) needed for local development.
+#
+# HOW TO USE:
+#   Start:   docker-compose up -d
+#   Stop:    docker-compose down
+#   Wipe DB: docker-compose down -v   ← WARNING: deletes all data
+#   Logs:    docker-compose logs -f db
+#
+# WHAT THIS RUNS:
+#   - PostgreSQL 16 (the database)
+#
+# The FastAPI app itself runs directly on your machine with uvicorn
+# (not inside Docker) — that keeps hot-reload development fast and simple.
+
+version: "3.9"
+
+services:
+
+  # ── PostgreSQL Database ──────────────────────────────────────────────────────
+  db:
+    image: postgres:16-alpine
+    # `alpine` is a minimal Linux variant — smaller image, faster to download
+
+    container_name: talktamila_db
+    # A friendly name so you can reference it in docker commands
+
+    restart: unless-stopped
+    # Automatically restart the container if it crashes,
+    # but NOT if you manually stopped it with `docker-compose down`
+
+    environment:
+      # These values must MATCH what's in your .env file's DATABASE_URL.
+      # Format: postgresql://POSTGRES_USER:POSTGRES_PASSWORD@localhost:5432/POSTGRES_DB
+      POSTGRES_USER: talktamila_user
+      POSTGRES_PASSWORD: talktamila_pass
+      POSTGRES_DB: talktamila_db
+
+    ports:
+      - "5432:5432"
+      # Format: "host_port:container_port"
+      # This maps port 5432 inside the container to port 5432 on your machine.
+      # Your FastAPI app (running on your machine) connects to localhost:5432.
+
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      # This is a named volume — it PERSISTS the database data even after
+      # `docker-compose down`. Without this, all your data would be gone
+      # every time you stop the container.
+
+    healthcheck:
+      # Docker periodically runs this command to check if PostgreSQL is ready.
+      # Other services can wait for this healthcheck before starting.
+      test: [ "CMD-SHELL", "pg_isready -U talktamila_user -d talktamila_db" ]
+      interval: 10s # Check every 10 seconds
+      timeout: 5s # Consider unhealthy if no response in 5 seconds
+      retries: 5 # After 5 failures, mark as unhealthy
+
+# ── Named Volumes ─────────────────────────────────────────────────────────────
+# Volumes listed here are managed by Docker and persist across restarts.
+volumes:
+  postgres_data:
+    driver: local
