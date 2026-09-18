@@ -14,4 +14,5 @@ class MusicTrack(Base):
     audio_url: Mapped[str] = mapped_column(String(500), nullable=False)
     cover_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
     genre: Mapped[str | None] = mapped_column(String(50), default="Tamil")
+    language: Mapped[str | None] = mapped_column(String(50), default="Tamil")
     is_trending: Mapped[bool] = mapped_column(Boolean, default=True)

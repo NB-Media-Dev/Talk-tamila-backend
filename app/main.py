@@ -78,16 +78,17 @@ from app.utils.seed import seed_db_data
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Ensure MySQL tables are created
-    Base.metadata.create_all(bind=engine)
-    db = SessionLocal()
+    # Ensure MySQL tables are created if DB is accessible
     try:
-        if db.query(User).first() is None:
-            seed_db_data(db)
+        Base.metadata.create_all(bind=engine)
+        db = SessionLocal()
+        try:
+            if db.query(User).first() is None:
+                seed_db_data(db)
+        finally:
+            db.close()
     except Exception as e:
-        print(f"Database auto-seeding note: {e}")
-    finally:
-        db.close()
+        print(f"Database auto-seeding/migration note: {e}")
     yield
 
 
@@ -251,7 +252,7 @@ async def login(request: Request, db: Session = Depends(get_db)) -> dict:
     refresh_token = create_refresh_token(user.id)
 
     user_dict = {
-        "id": user.user_id,
+        "id": user.id,
         "user_id": user.user_id,
         "username": user.username,
         "email": user.email,
@@ -268,7 +269,7 @@ async def login(request: Request, db: Session = Depends(get_db)) -> dict:
         "refresh_token": refresh_token,
         "token_type": "bearer",
         "user": user_dict,
-        "id": user.user_id,
+        "id": user.id,
         "user_id": user.user_id,
         "username": user.username,
         "email": user.email,

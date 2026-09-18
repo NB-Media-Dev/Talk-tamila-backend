@@ -9,6 +9,11 @@ from app.common.schemas.story import StoryStatsResponse, StoryWithMetrics
 router = APIRouter(prefix="/freelancer", tags=["Freelancer"])
 
 
+@router.get("/health")
+def freelancer_health():
+    return {"status": "ok", "role": "freelancer"}
+
+
 @router.get("/stats")
 def get_freelancer_stats(
     current_user: User = Depends(get_current_user),

@@ -23,7 +23,7 @@ class Settings(BaseSettings):
     DEBUG: bool = True
 
     # MySQL database connection
-    DATABASE_URL: str = "mysql+pymysql://root:tiger@localhost:3306/talktamila"
+    DATABASE_URL: str = "mysql+pymysql://root:1234@localhost:3306/talktamila"
 
     # Security
     SECRET_KEY: str = "dev_secret_key_change_in_production_jwt_9348572849"
@@ -34,7 +34,7 @@ class Settings(BaseSettings):
     # CORS
     BACKEND_CORS_ORIGINS: Union[str, List[str]] = [
         "http://localhost:3000",
-        "http://127.0.0.1:3000",
+        "http://192.168.0.72:3000",
         "http://localhost:5173",
     ]
 

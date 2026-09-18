@@ -54,6 +54,7 @@ class StoryItemResponse(BaseModel):
     music_url: Optional[str] = None
     music_thumbnail: Optional[str] = None
     music_duration: Optional[float] = 60.0
+    music_start_time: Optional[float] = 0.0
     likes_count: int = 0
     replies_count: int = 0
     views_count: int = 0
@@ -174,6 +175,7 @@ class StoryJsonCreateRequest(BaseModel):
     music_url: Optional[str] = None
     music_thumbnail: Optional[str] = None
     music_duration: Optional[float] = 60.0
+    music_start_time: Optional[float] = 0.0
 
 
 # ── New schemas ───────────────────────────────────────────────────────────────

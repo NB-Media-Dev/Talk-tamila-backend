@@ -21,6 +21,7 @@ from app.common.models.story import (
     StoryView,
 )
 from app.common.models.user import User
+from app.common.services.music_service import MusicService
 from app.common.schemas.story import (
     ActivityLiker,
     ActivityViewer,
@@ -110,31 +111,74 @@ async def file_to_base64_data_url(file: UploadFile) -> Tuple[str, str]:
     return data_url, media_type
 
 
+def fetch_batch_story_stats(story_ids: List[int], current_user_id: Optional[int], db: Session) -> Dict[str, Any]:
+    if not story_ids:
+        return {
+            "views": {},
+            "likes": {},
+            "replies": {},
+            "shares": {},
+            "viewed_by_me": set(),
+            "liked_by_me": set(),
+        }
+
+    views_rows = db.query(StoryView.story_id, func.count(StoryView.view_id)).filter(StoryView.story_id.in_(story_ids)).group_by(StoryView.story_id).all()
+    likes_rows = db.query(StoryLike.story_id, func.count(StoryLike.story_likes_id)).filter(StoryLike.story_id.in_(story_ids)).group_by(StoryLike.story_id).all()
+    replies_rows = db.query(StoryReply.story_id, func.count(StoryReply.reply_id)).filter(StoryReply.story_id.in_(story_ids)).group_by(StoryReply.story_id).all()
+    shares_rows = db.query(StoryShare.story_id, func.count(StoryShare.share_id)).filter(StoryShare.story_id.in_(story_ids)).group_by(StoryShare.story_id).all()
+
+    viewed_by_me = set()
+    liked_by_me = set()
+    if current_user_id:
+        v_rows = db.query(StoryView.story_id).filter(StoryView.story_id.in_(story_ids), StoryView.user_id == current_user_id).all()
+        viewed_by_me = {r[0] for r in v_rows}
+        l_rows = db.query(StoryLike.story_id).filter(StoryLike.story_id.in_(story_ids), StoryLike.user_id == current_user_id).all()
+        liked_by_me = {r[0] for r in l_rows}
+
+    return {
+        "views": {r[0]: r[1] for r in views_rows},
+        "likes": {r[0]: r[1] for r in likes_rows},
+        "replies": {r[0]: r[1] for r in replies_rows},
+        "shares": {r[0]: r[1] for r in shares_rows},
+        "viewed_by_me": viewed_by_me,
+        "liked_by_me": liked_by_me,
+    }
+
+
 def build_story_item(
     story: Story,
     current_user_id: Optional[int],
     db: Session,
+    batch_stats: Optional[Dict[str, Any]] = None,
 ) -> StoryItemResponse:
-    views_count = db.query(func.count(StoryView.view_id)).filter(StoryView.story_id == story.story_id).scalar() or 0
-    likes_count = db.query(func.count(StoryLike.story_likes_id)).filter(StoryLike.story_id == story.story_id).scalar() or 0
-    replies_count = db.query(func.count(StoryReply.reply_id)).filter(StoryReply.story_id == story.story_id).scalar() or 0
-    shares_count = db.query(func.count(StoryShare.share_id)).filter(StoryShare.story_id == story.story_id).scalar() or 0
+    if batch_stats is not None:
+        views_count = batch_stats["views"].get(story.story_id, 0)
+        likes_count = batch_stats["likes"].get(story.story_id, 0)
+        replies_count = batch_stats["replies"].get(story.story_id, 0)
+        shares_count = batch_stats["shares"].get(story.story_id, 0)
+        viewed_by_me = story.story_id in batch_stats["viewed_by_me"]
+        liked_by_me = story.story_id in batch_stats["liked_by_me"]
+    else:
+        views_count = db.query(func.count(StoryView.view_id)).filter(StoryView.story_id == story.story_id).scalar() or 0
+        likes_count = db.query(func.count(StoryLike.story_likes_id)).filter(StoryLike.story_id == story.story_id).scalar() or 0
+        replies_count = db.query(func.count(StoryReply.reply_id)).filter(StoryReply.story_id == story.story_id).scalar() or 0
+        shares_count = db.query(func.count(StoryShare.share_id)).filter(StoryShare.story_id == story.story_id).scalar() or 0
 
-    viewed_by_me = False
-    liked_by_me = False
-    if current_user_id:
-        viewed_by_me = (
-            db.query(StoryView.view_id)
-            .filter(StoryView.story_id == story.story_id, StoryView.user_id == current_user_id)
-            .first()
-            is not None
-        )
-        liked_by_me = (
-            db.query(StoryLike.story_likes_id)
-            .filter(StoryLike.story_id == story.story_id, StoryLike.user_id == current_user_id)
-            .first()
-            is not None
-        )
+        viewed_by_me = False
+        liked_by_me = False
+        if current_user_id:
+            viewed_by_me = (
+                db.query(StoryView.view_id)
+                .filter(StoryView.story_id == story.story_id, StoryView.user_id == current_user_id)
+                .first()
+                is not None
+            )
+            liked_by_me = (
+                db.query(StoryLike.story_likes_id)
+                .filter(StoryLike.story_id == story.story_id, StoryLike.user_id == current_user_id)
+                .first()
+                is not None
+            )
 
     owner_data = None
     if story.owner:
@@ -172,6 +216,7 @@ def build_story_item(
         music_url=story.music_url,
         music_thumbnail=story.music_thumbnail,
         music_duration=story.music_duration or 60.0,
+        music_start_time=story.music_start_time or 0.0,
         likes_count=likes_count,
         replies_count=replies_count,
         views_count=views_count,
@@ -189,6 +234,7 @@ def story_to_slide(story_item: StoryItemResponse, creator_name: str) -> StorySli
 
     return StorySlideResponse(
         id=story_item.id,
+        story_id=story_item.story_id,
         imageUrl=story_item.media_url,
         media_url=story_item.media_url,
         media_type=story_item.media_type,
@@ -243,11 +289,18 @@ class StoryService:
             muted_rows = db.query(StoryMute.muted_user_id).filter(StoryMute.user_id == current_user.id).all()
             muted_ids = {r[0] for r in muted_rows}
 
+        visible_stories = [
+            s for s in active_stories
+            if not (caller_id and s.user_id in muted_ids and s.user_id != caller_id)
+        ]
+
+        # Batch-fetch all stats in single SQL queries to eliminate N+1 latency
+        story_ids = [s.story_id for s in visible_stories]
+        batch_stats = fetch_batch_story_stats(story_ids, caller_id, db)
+
         groups_dict: Dict[int, Dict[str, Any]] = {}
-        for story in active_stories:
+        for story in visible_stories:
             uid = story.user_id
-            if caller_id and uid in muted_ids and uid != caller_id:
-                continue
             if uid not in groups_dict:
                 user_obj = story.owner
                 uname = user_obj.username if user_obj else f"user_{uid}"
@@ -273,7 +326,7 @@ class StoryService:
                     "music_track": None,
                 }
 
-            story_item = build_story_item(story, caller_id, db)
+            story_item = build_story_item(story, caller_id, db, batch_stats=batch_stats)
             groups_dict[uid]["stories"].append(story_item)
             if story.music_title and not groups_dict[uid]["music_track"]:
                 groups_dict[uid]["music_track"] = f"{story.music_title} – {story.music_artist or 'Tamil Music'} 🎵"
@@ -338,7 +391,9 @@ class StoryService:
             .order_by(desc(Story.created_at))
             .all()
         )
-        return [build_story_item(s, current_user.id, db) for s in stories]
+        story_ids = [s.story_id for s in stories]
+        batch_stats = fetch_batch_story_stats(story_ids, current_user.id, db)
+        return [build_story_item(s, current_user.id, db, batch_stats=batch_stats) for s in stories]
 
     @staticmethod
     def get_user_stories(target_user_id: int, current_user_id: Optional[int], db: Session) -> List[StoryItemResponse]:
@@ -357,7 +412,9 @@ class StoryService:
             .order_by(desc(Story.created_at))
             .all()
         )
-        return [build_story_item(s, current_user_id, db) for s in stories]
+        story_ids = [s.story_id for s in stories]
+        batch_stats = fetch_batch_story_stats(story_ids, current_user_id, db)
+        return [build_story_item(s, current_user_id, db, batch_stats=batch_stats) for s in stories]
 
     @staticmethod
     def get_story_by_id(story_id: int, current_user_id: Optional[int], db: Session) -> StoryItemResponse:
@@ -374,6 +431,7 @@ class StoryService:
         music_data: Optional[str],
         current_user: User,
         db: Session,
+        music_start_time: Optional[float] = 0.0,
     ) -> StoryItemResponse:
         """Upload single photo/video story directly to MySQL LONGTEXT as Base64 Data URL."""
         data_url, media_type = await file_to_base64_data_url(file)
@@ -389,8 +447,18 @@ class StoryService:
         expires_naive = now_naive + timedelta(hours=DEFAULT_DURATION_HOURS)
 
         music_dur = None
+        resolved_music_id = None
         if music_info:
             music_dur = max(1.0, min(float(music_info.get("music_duration", 60.0)), 60.0))
+            resolved_music_id = MusicService.resolve_or_create_music_track(
+                db=db,
+                music_id=music_info.get("music_id"),
+                music_title=music_info.get("music_title") or music_info.get("title"),
+                music_artist=music_info.get("music_artist") or music_info.get("artist"),
+                music_url=music_info.get("music_url") or music_info.get("audio_url"),
+                music_thumbnail=music_info.get("music_thumbnail") or music_info.get("cover_url"),
+                music_duration=music_dur,
+            )
 
         story = Story(
             user_id=current_user.id,
@@ -400,12 +468,13 @@ class StoryService:
             audience=audience or "public",
             created_at=now_naive,
             expires_at=expires_naive,
-            music_id=music_info.get("music_id"),
+            music_id=resolved_music_id,
             music_title=music_info.get("music_title") or music_info.get("title"),
             music_artist=music_info.get("music_artist") or music_info.get("artist"),
             music_url=music_info.get("music_url") or music_info.get("audio_url"),
             music_thumbnail=music_info.get("music_thumbnail") or music_info.get("cover_url"),
             music_duration=music_dur,
+            music_start_time=max(0.0, float(music_start_time or 0.0)),
         )
         db.add(story)
         db.commit()
@@ -421,6 +490,7 @@ class StoryService:
         music_data: Optional[str],
         current_user: User,
         db: Session,
+        music_start_time: Optional[float] = 0.0,
     ) -> StoryBatchResponse:
         """Batch upload multiple slides directly to MySQL demousertable."""
         if not files:
@@ -445,8 +515,18 @@ class StoryService:
                 pass
 
         music_dur = None
+        resolved_music_id = None
         if music_info:
             music_dur = max(1.0, min(float(music_info.get("music_duration", 60.0)), 60.0))
+            resolved_music_id = MusicService.resolve_or_create_music_track(
+                db=db,
+                music_id=music_info.get("music_id"),
+                music_title=music_info.get("music_title") or music_info.get("title"),
+                music_artist=music_info.get("music_artist") or music_info.get("artist"),
+                music_url=music_info.get("music_url") or music_info.get("audio_url"),
+                music_thumbnail=music_info.get("music_thumbnail") or music_info.get("cover_url"),
+                music_duration=music_dur,
+            )
 
         now_naive = make_naive(utc_now())
         expires_naive = now_naive + timedelta(hours=DEFAULT_DURATION_HOURS)
@@ -464,12 +544,13 @@ class StoryService:
                 audience=audience or "public",
                 created_at=now_naive + timedelta(milliseconds=idx * 10),
                 expires_at=expires_naive,
-                music_id=music_info.get("music_id"),
+                music_id=resolved_music_id,
                 music_title=music_info.get("music_title") or music_info.get("title"),
                 music_artist=music_info.get("music_artist") or music_info.get("artist"),
                 music_url=music_info.get("music_url") or music_info.get("audio_url"),
                 music_thumbnail=music_info.get("music_thumbnail") or music_info.get("cover_url"),
                 music_duration=music_dur,
+                music_start_time=max(0.0, float(music_start_time or 0.0)),
             )
             db.add(story)
             created_stories.append(story)
@@ -1096,23 +1177,23 @@ class StoryService:
             .all()
         )
 
-        result = []
-        for s in stories:
-            views_count = db.query(func.count(StoryView.view_id)).filter(StoryView.story_id == s.story_id).scalar() or 0
-            likes_count = db.query(func.count(StoryLike.story_likes_id)).filter(StoryLike.story_id == s.story_id).scalar() or 0
-            result.append(
-                StoryArchivedItem(
-                    story_id=s.story_id,
-                    id=s.story_id,
-                    media_url=s.media_url,
-                    media_type=s.media_type or "image",
-                    caption=s.caption,
-                    created_at=format_iso(s.created_at) or utc_now().isoformat(),
-                    expired_at=format_iso(s.expires_at) or utc_now().isoformat(),
-                    views_count=views_count,
-                    likes_count=likes_count,
-                )
+        story_ids = [s.story_id for s in stories]
+        batch_stats = fetch_batch_story_stats(story_ids, current_user.id, db)
+
+        result = [
+            StoryArchivedItem(
+                story_id=s.story_id,
+                id=s.story_id,
+                media_url=s.media_url,
+                media_type=s.media_type or "image",
+                caption=s.caption,
+                created_at=format_iso(s.created_at) or utc_now().isoformat(),
+                expired_at=format_iso(s.expires_at) or utc_now().isoformat(),
+                views_count=batch_stats["views"].get(s.story_id, 0),
+                likes_count=batch_stats["likes"].get(s.story_id, 0),
             )
+            for s in stories
+        ]
         return result
 
     @staticmethod
@@ -1185,12 +1266,15 @@ class StoryService:
             .all()
         )
 
+        story_ids = [s.story_id for s in stories]
+        batch_stats = fetch_batch_story_stats(story_ids, current_user.id, db)
+
         result = []
         for s in stories:
-            views_count = db.query(func.count(StoryView.view_id)).filter(StoryView.story_id == s.story_id).scalar() or 0
-            likes_count = db.query(func.count(StoryLike.story_likes_id)).filter(StoryLike.story_id == s.story_id).scalar() or 0
-            replies_count = db.query(func.count(StoryReply.reply_id)).filter(StoryReply.story_id == s.story_id).scalar() or 0
-            shares_count = db.query(func.count(StoryShare.share_id)).filter(StoryShare.story_id == s.story_id).scalar() or 0
+            views_count = batch_stats["views"].get(s.story_id, 0)
+            likes_count = batch_stats["likes"].get(s.story_id, 0)
+            replies_count = batch_stats["replies"].get(s.story_id, 0)
+            shares_count = batch_stats["shares"].get(s.story_id, 0)
             # Engagement rate = (likes + replies + shares) / views * 100 (if any views)
             engagement_rate = round((likes_count + replies_count + shares_count) / views_count * 100, 2) if views_count > 0 else 0.0
             is_active = (s.expires_at is None) or (s.expires_at > now_naive)

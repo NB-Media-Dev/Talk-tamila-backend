@@ -133,9 +133,6 @@ from datetime import timedelta
 router = APIRouter(prefix="/stories", tags=["Stories"])
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Feed & Discovery
-# ─────────────────────────────────────────────────────────────────────────────
 
 @router.get("", response_model=List[StoryGroupResponse])
 @router.get("/feed", response_model=List[StoryGroupResponse])
@@ -153,9 +150,6 @@ def list_active_stories(
     return StoryService.list_active_groups(current_user, db, role_filter=role)
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# My Stories (authenticated)
-# ─────────────────────────────────────────────────────────────────────────────
 
 @router.get("/my", response_model=List[StoryItemResponse])
 @router.get("/me", response_model=List[StoryItemResponse])
@@ -207,30 +201,26 @@ def get_muted_creators(
     return StoryService.get_muted_creators(current_user, db)
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Music Library
-# ─────────────────────────────────────────────────────────────────────────────
 
 @router.get("/music/trending", response_model=List[MusicTrackResponse])
 def get_trending_music(
     limit: int = Query(default=10, ge=1, le=50),
+    db: Session = Depends(get_db),
 ):
     """Return top trending Tamil music tracks for story background music."""
-    return MusicService.get_trending(limit)
+    return MusicService.get_trending(db, limit)
 
 
 @router.get("/music/search", response_model=List[MusicTrackResponse])
 def search_music(
     q: str = Query(default=""),
     limit: int = Query(default=10, ge=1, le=50),
+    db: Session = Depends(get_db),
 ):
     """Search for music tracks by title or artist name."""
-    return MusicService.search(q, limit)
+    return MusicService.search(db, q, limit)
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Specific User Stories
-# ─────────────────────────────────────────────────────────────────────────────
 
 @router.get("/user/{user_id}", response_model=List[StoryItemResponse])
 def get_user_stories(
@@ -243,9 +233,6 @@ def get_user_stories(
     return StoryService.get_user_stories(user_id, caller_id, db)
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Single Story
-# ─────────────────────────────────────────────────────────────────────────────
 
 @router.get("/{story_id:int}", response_model=StoryItemResponse)
 def get_single_story(
@@ -258,9 +245,6 @@ def get_single_story(
     return StoryService.get_story_by_id(story_id, caller_id, db)
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Upload & Create  (all roles: influencer, freelancer, admin)
-# ─────────────────────────────────────────────────────────────────────────────
 
 @router.post("/upload", response_model=StoryItemResponse, status_code=status.HTTP_201_CREATED)
 async def upload_single_story(
@@ -268,6 +252,7 @@ async def upload_single_story(
     caption: Optional[str] = Form(None),
     audience: Optional[str] = Form("public"),
     music_data: Optional[str] = Form(None, description="JSON string with music metadata"),
+    music_start_time: Optional[float] = Form(0.0, description="Clip start position in seconds (e.g. 30.0)"),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> StoryItemResponse:
@@ -277,10 +262,11 @@ async def upload_single_story(
     - **caption**: optional text overlay (max 2200 chars)
     - **audience**: `public` | `followers` | `close_friends`
     - **music_data**: optional JSON `{music_id, music_title, music_artist, music_url, music_duration}`
+    - **music_start_time**: second offset where the 60-second clip begins (default 0.0)
 
     Story expires automatically after 24 hours.
     """
-    return await StoryService.upload_single(file, caption, audience, music_data, current_user, db)
+    return await StoryService.upload_single(file, caption, audience, music_data, current_user, db, music_start_time=music_start_time or 0.0)
 
 
 @router.post("/upload-multiple", response_model=StoryBatchResponse, status_code=status.HTTP_201_CREATED)
@@ -289,6 +275,7 @@ async def upload_multiple_stories(
     captions: Optional[str] = Form(None, description="JSON array of captions, one per slide"),
     audience: Optional[str] = Form("public"),
     music_data: Optional[str] = Form(None),
+    music_start_time: Optional[float] = Form(0.0, description="Clip start position in seconds (e.g. 30.0)"),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> StoryBatchResponse:
@@ -296,9 +283,10 @@ async def upload_multiple_stories(
 
     - **files**: list of image/video files (max 10)
     - **captions**: JSON array e.g. `["Slide 1", "Slide 2"]`
+    - **music_start_time**: second offset for the 60-second clip window
     - Each slide becomes an independent story sharing the same 24-h expiry window.
     """
-    return await StoryService.upload_multiple(files, captions, audience, music_data, current_user, db)
+    return await StoryService.upload_multiple(files, captions, audience, music_data, current_user, db, music_start_time=music_start_time or 0.0)
 
 
 @router.post("", response_model=StoryItemResponse, status_code=status.HTTP_201_CREATED)
@@ -314,6 +302,16 @@ def create_story_json(
     now_naive = make_naive(utc_now())
     expires_naive = now_naive + timedelta(hours=payload.duration_hours or DEFAULT_DURATION_HOURS)
 
+    resolved_music_id = MusicService.resolve_or_create_music_track(
+        db=db,
+        music_id=payload.music_id,
+        music_title=payload.music_title,
+        music_artist=payload.music_artist,
+        music_url=payload.music_url,
+        music_thumbnail=payload.music_thumbnail,
+        music_duration=payload.music_duration or 60.0,
+    )
+
     story = Story(
         user_id=current_user.id,
         media_url=payload.media_url,
@@ -322,12 +320,13 @@ def create_story_json(
         audience=payload.audience or "public",
         created_at=now_naive,
         expires_at=expires_naive,
-        music_id=payload.music_id,
+        music_id=resolved_music_id,
         music_title=payload.music_title,
         music_artist=payload.music_artist,
         music_url=payload.music_url,
         music_thumbnail=payload.music_thumbnail,
         music_duration=payload.music_duration or 60.0,
+        music_start_time=max(0.0, float(payload.music_start_time or 0.0)),
     )
     db.add(story)
     db.commit()
@@ -335,9 +334,6 @@ def create_story_json(
     return build_story_item(story, current_user.id, db)
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Edit & Delete
-# ─────────────────────────────────────────────────────────────────────────────
 
 @router.patch("/{story_id:int}", response_model=StoryItemResponse)
 def edit_story(
@@ -365,9 +361,6 @@ def delete_story(
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Engagement – View, Like, React, Reply
-# ─────────────────────────────────────────────────────────────────────────────
 
 @router.post("/{story_id:int}/view")
 def record_story_view(
@@ -466,9 +459,6 @@ def pause_story(
     return StoryService.record_pause_state(story_id, action, progress_ms, slide_index, current_user, db)
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Activity  (owner & admin only)
-# ─────────────────────────────────────────────────────────────────────────────
 
 @router.get("/{story_id:int}/activity", response_model=StoryActivityResponse)
 def get_story_activity(
@@ -513,9 +503,6 @@ def get_story_likers(
     return StoryService.get_likers(story_id, current_user, db, page=page, page_size=page_size)
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Share, Save, Report
-# ─────────────────────────────────────────────────────────────────────────────
 
 @router.post("/{story_id:int}/share", response_model=StoryShareResponse)
 def share_story(
@@ -569,9 +556,6 @@ def report_story(
     return StoryService.report_story(story_id, payload.reason, current_user, db, details=payload.details)
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Mute
-# ─────────────────────────────────────────────────────────────────────────────
 
 @router.post("/mute/{user_id:int}", response_model=StoryMuteResponse)
 @router.post("/users/{user_id:int}/mute", response_model=StoryMuteResponse)
