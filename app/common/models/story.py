@@ -12,6 +12,7 @@ from sqlalchemy import (
     Text,
     func,
 )
+from sqlalchemy.dialects.mysql import LONGTEXT
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
@@ -25,13 +26,13 @@ class Story(Base):
         ForeignKey("users.user_id", ondelete="CASCADE", onupdate="CASCADE"),
         nullable=False,
     )
-    media_url: Mapped[str] = mapped_column(Text, nullable=False)
+    media_url: Mapped[str] = mapped_column(Text().with_variant(LONGTEXT, "mysql"), nullable=False)
     media_type: Mapped[str] = mapped_column(
         Enum("image", "video", native_enum=False, length=10),
         default="image",
         nullable=False,
     )
-    caption: Mapped[str | None] = mapped_column(Text, nullable=True)
+    caption: Mapped[str | None] = mapped_column(Text().with_variant(LONGTEXT, "mysql"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
     reply: Mapped[str | None] = mapped_column(Text, nullable=True)
