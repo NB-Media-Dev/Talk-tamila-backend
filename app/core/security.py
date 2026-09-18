@@ -6,7 +6,7 @@ try:
     import jwt
 except ImportError:
     try:
-        from jose import jwt  # fallback to python-jose
+        from jose import jwt
     except ImportError:
         raise ImportError("Neither 'PyJWT' nor 'python-jose' is installed.")
 

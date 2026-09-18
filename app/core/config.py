@@ -5,8 +5,6 @@ from typing import List, Optional, Union
 from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-# Resolve .env path relative to this file so it works regardless of where
-# uvicorn/the server is launched from.
 _ENV_FILE = Path(__file__).resolve().parent.parent.parent / ".env"
 
 
@@ -22,16 +20,13 @@ class Settings(BaseSettings):
     ENVIRONMENT: str = "development"
     DEBUG: bool = True
 
-    # MySQL database connection
     DATABASE_URL: str = "mysql+pymysql://root:1234@localhost:3306/talktamila"
 
-    # Security
     SECRET_KEY: str = "dev_secret_key_change_in_production_jwt_9348572849"
     ALGORITHM: str = "HS256"
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24  # 24 hours
-    REFRESH_TOKEN_EXPIRE_MINUTES: int = 60 * 24 * 7  # 7 days
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24
+    REFRESH_TOKEN_EXPIRE_MINUTES: int = 60 * 24 * 7
 
-    # CORS
     BACKEND_CORS_ORIGINS: Union[str, List[str]] = [
         "http://localhost:3000",
         "http://192.168.0.72:3000",

@@ -27,9 +27,6 @@ def get_freelancer_stats(
         "message": "Freelancer dashboard stats",
     }
 
-
-# ── Story sub-routes for freelancers ─────────────────────────────────────────
-
 @router.get("/stories", response_model=List[StoryWithMetrics])
 def get_freelancer_stories(
     current_user: User = Depends(get_current_freelancer),

@@ -1,1 +1,1 @@
-# Wallet schema placeholder
+

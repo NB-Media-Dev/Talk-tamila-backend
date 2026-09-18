@@ -34,7 +34,6 @@ def get_current_user(
 
     user: Optional[User] = None
 
-    # 1. First check Bearer token if provided
     auth_header = request.headers.get("Authorization") or request.headers.get("authorization")
     raw_token = token
     if not raw_token and auth_header and auth_header.startswith("Bearer "):
@@ -61,7 +60,6 @@ def get_current_user(
         except Exception:
             pass
 
-    # 2. Check X-User-Id header (explicit authenticated user identifier from frontend session)
     if not user and request:
         x_uid = request.headers.get("X-User-Id") or request.headers.get("x-user-id")
         if x_uid and str(x_uid).isdigit():
@@ -70,7 +68,6 @@ def get_current_user(
     if user and user.is_active:
         return user
 
-    # 3. Development fallback ONLY when completely unauthenticated in non-prod
     if settings.ENVIRONMENT != "production" and not raw_token:
         x_uid = request.headers.get("X-User-Id") or request.headers.get("x-user-id")
         if x_uid and str(x_uid).isdigit():

@@ -8,7 +8,7 @@ class StorySlideResponse(BaseModel):
     media_url: Optional[str] = None
     media_type: str = "image"
     caption: Optional[str] = None
-    duration: int = 5000  # ms for auto-advance progress bar
+    duration: int = 5000
     created_at: Optional[str] = None
     expires_at: Optional[str] = None
     liked: bool = False
@@ -177,8 +177,6 @@ class StoryJsonCreateRequest(BaseModel):
     music_duration: Optional[float] = 60.0
     music_start_time: Optional[float] = 0.0
 
-
-# ── New schemas ───────────────────────────────────────────────────────────────
 
 class StoryPatchRequest(BaseModel):
     """Edit caption and/or audience of an existing story (owner only)."""

@@ -18,9 +18,6 @@ def get_influencer_stats(
     """Dashboard stats for influencer: follower count, post count, etc."""
     return InfluencerService.get_dashboard_stats(current_user, db)
 
-
-# ── Story sub-routes for influencers ─────────────────────────────────────────
-
 @router.get("/stories", response_model=List[StoryWithMetrics])
 def get_influencer_stories(
     current_user: User = Depends(get_current_influencer),

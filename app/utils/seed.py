@@ -55,7 +55,6 @@ def seed_db_data(db: Session):
 
     now = datetime.now(timezone.utc).replace(tzinfo=None)
 
-    # 1. Arjun's stories (2 slides matching screenshot: Slide 1 of 2 with Anirudh - Trend Beat)
     arjun_user = created_users["Arjun"]
     s_arjun_1 = Story(
         user_id=arjun_user.user_id,
@@ -81,7 +80,6 @@ def seed_db_data(db: Session):
         music_duration=30.0,
     )
 
-    # 2. Priya's story
     priya_user = created_users["Priya"]
     s_priya = Story(
         user_id=priya_user.user_id,
@@ -94,7 +92,6 @@ def seed_db_data(db: Session):
         music_artist="Anirudh Ravichander",
     )
 
-    # 3. Karthik's story
     karthik_user = created_users["Karthik"]
     s_karthik = Story(
         user_id=karthik_user.user_id,
