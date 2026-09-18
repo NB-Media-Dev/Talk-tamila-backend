@@ -1,27 +1,34 @@
-from pydantic import BaseModel, EmailStr
 from datetime import date, datetime
-from app.common.enums import UserRole
+from typing import Optional
+from pydantic import BaseModel, ConfigDict, EmailStr
 
-class UserOut(BaseModel):
-    user_id: int
+
+class UserBase(BaseModel):
     username: str
+    email: EmailStr
     first_name: str
     last_name: str
-    email: EmailStr
     mobile_no: str
-    role: UserRole
-    dob: date | None = None
-    bio: str | None = None
-    profile_pic_url: str | None = None
-    created_at: datetime
-
-    class Config:
-        from_attributes = True
-
-class ProfileUpdateIn(BaseModel):
-    first_name: str | None = None
-    last_name: str | None = None
-    bio: str | None = None
-    profile_pic_url: str | None = None
+    role: str = "influencer"
+    dob: Optional[date] = None
 
 
+class UserProfileUpdate(BaseModel):
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+    bio: Optional[str] = None
+    location: Optional[str] = None
+    avatar_url: Optional[str] = None
+
+
+class UserOut(UserBase):
+    id: int
+    user_id: int
+    full_name: str
+    avatar_url: Optional[str] = None
+    bio: Optional[str] = None
+    location: Optional[str] = None
+    followers_count: int = 0
+    created_at: Optional[datetime] = None
+
+    model_config = ConfigDict(from_attributes=True)
