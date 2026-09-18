@@ -1,3 +1,5 @@
+from typing import Generator, Optional
+
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.orm import Session
