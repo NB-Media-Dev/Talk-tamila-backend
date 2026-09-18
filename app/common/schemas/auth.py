@@ -1,5 +1,5 @@
 from datetime import date, datetime
-from typing import Optional
+from typing import Optional, Literal
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
 
@@ -30,7 +30,7 @@ class RegisterRequest(BaseModel):
     last_name: Optional[str] = ""
     full_name: Optional[str] = None
     mobile_no: Optional[str] = None
-    role: Optional[str] = "influencer"
+    role: Literal["admin", "influencer", "freelancer"] = "influencer"
     dob: Optional[date] = None
 
 
