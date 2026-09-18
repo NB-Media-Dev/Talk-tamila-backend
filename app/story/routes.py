@@ -99,6 +99,7 @@ from app.common.schemas.story import (
     StoryGroupResponse,
     StoryItemResponse,
     StoryJsonCreateRequest,
+    StoryTextCreateRequest,
     StoryMuteResponse,
     StoryPatchRequest,
     StoryReactRequest,
@@ -295,10 +296,7 @@ def create_story_json(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> StoryItemResponse:
-    """Create a story from an external media URL (JSON body — no file upload needed).
-
-    Useful when the media is already hosted (e.g. CDN, presigned S3 URL).
-    """
+    """Create a story from an external media URL, text story, or preset gradient."""
     now_naive = make_naive(utc_now())
     expires_naive = now_naive + timedelta(hours=payload.duration_hours or DEFAULT_DURATION_HOURS)
 
@@ -312,10 +310,60 @@ def create_story_json(
         music_duration=payload.music_duration or 60.0,
     )
 
+    media_type = (payload.media_type or "image").strip().lower()
+    media_url = payload.media_url
+    if not media_url:
+        media_url = "gradient:insta" if media_type == "text" else "text-story"
+
     story = Story(
         user_id=current_user.id,
-        media_url=payload.media_url,
-        media_type=payload.media_type or "image",
+        media_url=media_url,
+        media_type=media_type,
+        caption=payload.caption,
+        audience=payload.audience or "public",
+        created_at=now_naive,
+        expires_at=expires_naive,
+        music_id=resolved_music_id,
+        music_title=payload.music_title,
+        music_artist=payload.music_artist,
+        music_url=payload.music_url,
+        music_thumbnail=payload.music_thumbnail,
+        music_duration=payload.music_duration or 60.0,
+        music_start_time=max(0.0, float(payload.music_start_time or 0.0)),
+    )
+    db.add(story)
+    db.commit()
+    db.refresh(story)
+    return build_story_item(story, current_user.id, db)
+
+
+@router.post("/text", response_model=StoryItemResponse, status_code=status.HTTP_201_CREATED)
+def create_text_story(
+    payload: StoryTextCreateRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> StoryItemResponse:
+    """Create a text-only story with gradient theme styling."""
+    now_naive = make_naive(utc_now())
+    expires_naive = now_naive + timedelta(hours=payload.duration_hours or DEFAULT_DURATION_HOURS)
+
+    resolved_music_id = MusicService.resolve_or_create_music_track(
+        db=db,
+        music_id=payload.music_id,
+        music_title=payload.music_title,
+        music_artist=payload.music_artist,
+        music_url=payload.music_url,
+        music_thumbnail=payload.music_thumbnail,
+        music_duration=payload.music_duration or 60.0,
+    )
+
+    theme_val = (payload.theme or "insta").strip().lower()
+    media_url = payload.media_url or f"gradient:{theme_val}"
+
+    story = Story(
+        user_id=current_user.id,
+        media_url=media_url,
+        media_type="text",
         caption=payload.caption,
         audience=payload.audience or "public",
         created_at=now_naive,

@@ -4,6 +4,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 class StorySlideResponse(BaseModel):
     id: int
+    story_id: Optional[int] = None
     imageUrl: str
     media_url: Optional[str] = None
     media_type: str = "image"
@@ -164,9 +165,24 @@ class StoryMuteResponse(BaseModel):
 
 
 class StoryJsonCreateRequest(BaseModel):
-    media_url: str = Field(..., min_length=1)
+    media_url: Optional[str] = "text-story"
     media_type: Optional[str] = "image"
     caption: Optional[str] = None
+    audience: Optional[str] = "public"
+    duration_hours: Optional[int] = Field(default=24, ge=1, le=72)
+    music_id: Optional[int] = None
+    music_title: Optional[str] = None
+    music_artist: Optional[str] = None
+    music_url: Optional[str] = None
+    music_thumbnail: Optional[str] = None
+    music_duration: Optional[float] = 60.0
+    music_start_time: Optional[float] = 0.0
+
+
+class StoryTextCreateRequest(BaseModel):
+    caption: str = Field(..., min_length=1, max_length=2200)
+    theme: Optional[str] = "insta"
+    media_url: Optional[str] = None
     audience: Optional[str] = "public"
     duration_hours: Optional[int] = Field(default=24, ge=1, le=72)
     music_id: Optional[int] = None

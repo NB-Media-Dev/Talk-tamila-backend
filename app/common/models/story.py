@@ -28,7 +28,7 @@ class Story(Base):
     )
     media_url: Mapped[str] = mapped_column(Text().with_variant(LONGTEXT, "mysql"), nullable=False)
     media_type: Mapped[str] = mapped_column(
-        Enum("image", "video", native_enum=False, length=10),
+        String(20),
         default="image",
         nullable=False,
     )
