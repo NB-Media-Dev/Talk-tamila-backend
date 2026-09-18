@@ -17,11 +17,6 @@ OPEN_ITUNES_API_URL = "https://itunes.apple.com/search"
 
 
 def fetch_from_open_itunes(term: str, limit: int = 15) -> List[MusicTrackResponse]:
-    """Fetch free songs, artwork, and audio preview clips from open public iTunes Search API.
-    - 100% Free & Open (No API keys required)
-    - Full global catalog (All Tamil, Indian, International tracks)
-    - High-quality 30-second audio stream and high-res cover artwork
-    """
     params = {
         "term": term,
         "media": "music",
@@ -31,7 +26,7 @@ def fetch_from_open_itunes(term: str, limit: int = 15) -> List[MusicTrackRespons
     encoded_url = f"{OPEN_ITUNES_API_URL}?{urllib.parse.urlencode(params)}"
     req = urllib.request.Request(
         encoded_url,
-        headers={"User-Agent": "TalkTamila/2.0 (Story Music Engine)"},
+        headers={"User-Agent": "TalkTamila/2.0"},
     )
 
     try:
@@ -54,7 +49,6 @@ def fetch_from_open_itunes(term: str, limit: int = 15) -> List[MusicTrackRespons
 
                 artwork_url = item.get("artworkUrl100")
                 if artwork_url:
-                    # Upgrade thumbnail to high resolution 600x600 artwork
                     artwork_url = artwork_url.replace("100x100bb", "600x600bb")
 
                 duration_ms = item.get("trackTimeMillis")
@@ -77,23 +71,16 @@ def fetch_from_open_itunes(term: str, limit: int = 15) -> List[MusicTrackRespons
 
             return parsed_tracks
     except Exception as e:
-        logger.warning("Open music fetch note for term '%s': %s", term, e)
+        logger.warning("Error fetching music for term '%s': %s", term, e)
         return []
 
 
 class MusicService:
     @staticmethod
     def get_trending(db: Session, limit: int = 15) -> List[MusicTrackResponse]:
-        """Fetch trending songs dynamically:
-        1. Query open live trending tracks (Tamil Top Hits / Trending Hits)
-        2. Query songs used most frequently in recent stories (live creator rankings)
-        3. Query curated tracks from MusicTrack database table
-        4. Merge and deduplicate dynamically
-        """
         results: List[MusicTrackResponse] = []
         seen_keys = set()
 
-        # 1. Fetch live trending hits from open music API
         live_hits = fetch_from_open_itunes("Tamil Top Hits", limit=limit)
         for t in live_hits:
             key = f"{t.title.strip().lower()}::{t.artist.strip().lower()}"
@@ -101,7 +88,6 @@ class MusicService:
                 seen_keys.add(key)
                 results.append(t)
 
-        # 2. Fetch live trending songs from active story usages
         try:
             story_tracks = (
                 db.query(
@@ -145,7 +131,6 @@ class MusicService:
         except Exception:
             pass
 
-        # 3. Fetch tracks from MusicTrack database table
         try:
             db_tracks = (
                 db.query(MusicTrack)
@@ -180,7 +165,6 @@ class MusicService:
 
     @staticmethod
     def search(db: Session, query: str = "", limit: int = 15) -> List[MusicTrackResponse]:
-        """Search songs in real time across the complete open music library + database + stories."""
         q = query.strip()
         if not q:
             return MusicService.get_trending(db, limit)
@@ -188,8 +172,6 @@ class MusicService:
         results: List[MusicTrackResponse] = []
         seen_keys = set()
 
-        # 1. Search live in open global music library
-        # Also append Tamil keyword if searching generic titles to prioritize regional tracks
         live_matches = fetch_from_open_itunes(f"{q} Tamil", limit=limit)
         if not live_matches:
             live_matches = fetch_from_open_itunes(q, limit=limit)
@@ -202,7 +184,6 @@ class MusicService:
 
         pattern = f"%{q}%"
 
-        # 2. Search in MusicTrack database table
         try:
             db_tracks = (
                 db.query(MusicTrack)
@@ -239,7 +220,6 @@ class MusicService:
         except Exception:
             pass
 
-        # 3. Search in story tracks
         try:
             story_tracks = (
                 db.query(
@@ -298,14 +278,9 @@ class MusicService:
         music_thumbnail: Optional[str] = None,
         music_duration: Optional[float] = None,
     ) -> Optional[int]:
-        """Ensures a music track exists in the `music_tracks` table before attaching to a story.
-        Prevents foreign key constraint errors (`fk_stories_music`) when users select songs
-        from live open search or external sources.
-        """
         if not music_id and not (music_title and music_url):
             return None
 
-        # 1. Check if track already exists by track_id
         if music_id is not None:
             try:
                 existing = db.query(MusicTrack).filter(MusicTrack.track_id == int(music_id)).first()
@@ -314,7 +289,6 @@ class MusicService:
             except Exception:
                 pass
 
-        # 2. Check if track already exists by exact title & artist
         if music_title:
             try:
                 existing_name = (
@@ -330,10 +304,8 @@ class MusicService:
             except Exception:
                 pass
 
-        # 3. Insert new track into music_tracks table
         if music_title and (music_url or music_id):
             try:
-                # Use a nested transaction / savepoint so any error doesn't abort the outer transaction
                 with db.begin_nested():
                     new_track = MusicTrack(
                         track_id=int(music_id) if music_id and int(music_id) < 2147483647 else None,
@@ -350,8 +322,7 @@ class MusicService:
                     db.flush()
                     return new_track.track_id
             except Exception as e:
-                logger.warning("Auto-save music_track note: %s", e)
-                # Fallback: check if track was created or return None
+                logger.warning("Auto-save music_track error: %s", e)
                 try:
                     existing_name = (
                         db.query(MusicTrack)

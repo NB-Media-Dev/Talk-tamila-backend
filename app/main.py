@@ -332,23 +332,16 @@ def change_password(
     return {"success": True, "message": "Password changed successfully"}
 
 
-# ============================================================================
-# STORIES ROUTER → see app/story/routes.py (dedicated module)
-# ============================================================================
-# All story endpoints are defined in app/story/routes.py and mounted below.
-# New endpoints added: /viewers, /likers, /stats/me, /archived, PATCH /{id}, /react
 
-
-# ============================================================================
-# MOUNT ROUTERS UNDER /api AND /api/v1
-# ============================================================================
-for r in [
+routers = [
     auth_router,
-    story_router,       # dedicated story module (app/story/routes.py)
+    story_router,
     admin_router,
     influencer_router,
     freelancer_router,
     superadmin_router,
-]:
+]
+
+for r in routers:
     app.include_router(r, prefix=settings.API_V1_PREFIX)
     app.include_router(r, prefix="/api")
