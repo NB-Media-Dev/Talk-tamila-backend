@@ -294,7 +294,6 @@ class StoryService:
             if not (caller_id and s.user_id in muted_ids and s.user_id != caller_id)
         ]
 
-        # Batch-fetch all stats in single SQL queries to eliminate N+1 latency
         story_ids = [s.story_id for s in visible_stories]
         batch_stats = fetch_batch_story_stats(story_ids, caller_id, db)
 
@@ -368,7 +367,6 @@ class StoryService:
                 )
             )
 
-        # Rank self stories ('Your Story') first, then unread creators, then all-read creators
         if caller_id:
             result_groups.sort(key=lambda g: (0 if g.is_my_story else 1, 1 if g.all_viewed else 0))
 
@@ -1000,8 +998,6 @@ class StoryService:
             likers=likers_list,
         )
 
-    # ── New methods ───────────────────────────────────────────────────────────
-
     @staticmethod
     def get_viewers(
         story_id: int,
@@ -1207,7 +1203,6 @@ class StoryService:
         if not story:
             raise HTTPException(status_code=404, detail="Story not found")
 
-        # Reactions are stored as likes with a tagged user_name field
         tag = f"react:{emoji}"
         existing = (
             db.query(StoryLike)
@@ -1275,7 +1270,6 @@ class StoryService:
             likes_count = batch_stats["likes"].get(s.story_id, 0)
             replies_count = batch_stats["replies"].get(s.story_id, 0)
             shares_count = batch_stats["shares"].get(s.story_id, 0)
-            # Engagement rate = (likes + replies + shares) / views * 100 (if any views)
             engagement_rate = round((likes_count + replies_count + shares_count) / views_count * 100, 2) if views_count > 0 else 0.0
             is_active = (s.expires_at is None) or (s.expires_at > now_naive)
             result.append(

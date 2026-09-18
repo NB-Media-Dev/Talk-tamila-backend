@@ -78,7 +78,6 @@ from app.utils.seed import seed_db_data
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Ensure MySQL tables are created if DB is accessible
     try:
         Base.metadata.create_all(bind=engine)
         db = SessionLocal()
@@ -102,7 +101,6 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# CORS setup
 app.add_middleware(
     CORSMiddleware,
     allow_origin_regex=r"^https?://.*",
@@ -134,9 +132,6 @@ def health_check() -> dict:
     }
 
 
-# ============================================================================
-# AUTH ROUTER (Login, Sign Up, Refresh, Me)
-# ============================================================================
 auth_router = APIRouter(prefix="/auth", tags=["Auth"])
 
 
