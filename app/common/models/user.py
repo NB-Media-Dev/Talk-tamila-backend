@@ -23,6 +23,9 @@ class User(Base):
     )
     dob: Mapped[date | None] = mapped_column(Date, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    reset_otp: Mapped[Optional[str]] = mapped_column(String(6), nullable=True)
+    reset_otp_expires: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    reset_otp_verified: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
     @property
     def id(self) -> int:

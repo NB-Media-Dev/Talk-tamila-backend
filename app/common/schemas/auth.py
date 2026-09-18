@@ -1,6 +1,6 @@
 from datetime import date, datetime
 from typing import Optional, Literal
-from pydantic import BaseModel, ConfigDict, EmailStr, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 
 
 class Token(BaseModel):
@@ -51,3 +51,31 @@ class UserResponse(BaseModel):
     created_at: Optional[datetime] = None
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class ForgotPasswordRequest(BaseModel):
+    identifier: str  # email or mobile number
+
+    @field_validator("identifier")
+    @classmethod
+    def validate_identifier(cls, v: str) -> str:
+        v = v.strip()
+        if "@" in v:
+            if "." not in v.split("@")[-1]:
+                raise ValueError("Enter a valid email address.")
+        else:
+            digits = v.replace("+", "").replace(" ", "")
+            if not digits.isdigit() or not (7 <= len(digits) <= 15):
+                raise ValueError("Enter a valid phone number.")
+        return v
+
+
+class VerifyOtpRequest(BaseModel):
+    identifier: str
+    otp: str = Field(..., min_length=6, max_length=6)
+
+
+class ResetPasswordRequest(BaseModel):
+    identifier: str
+    otp: str = Field(..., min_length=6, max_length=6)
+    new_password: str = Field(..., min_length=6)
