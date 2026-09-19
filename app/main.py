@@ -1,4 +1,5 @@
 import json
+from app.common.schemas.auth import ForgotPasswordRequest, VerifyOtpRequest, ResetPasswordRequest
 from contextlib import asynccontextmanager
 from typing import Any, Dict, List, Optional
 
@@ -80,6 +81,28 @@ from app.utils.seed import seed_db_data
 async def lifespan(app: FastAPI):
     try:
         Base.metadata.create_all(bind=engine)
+
+        with engine.connect() as conn:
+            for stmt in [
+                "ALTER TABLE stories MODIFY COLUMN media_type VARCHAR(20) NOT NULL DEFAULT 'image'",
+                "ALTER TABLE stories MODIFY COLUMN media_url LONGTEXT NOT NULL",
+                "ALTER TABLE stories MODIFY COLUMN caption LONGTEXT NULL",
+                "ALTER TABLE stories MODIFY COLUMN music_url LONGTEXT NULL",
+                "ALTER TABLE stories MODIFY COLUMN music_thumbnail LONGTEXT NULL",
+                "ALTER TABLE music_tracks ADD COLUMN language VARCHAR(50) DEFAULT 'Tamil'",
+                "ALTER TABLE music_tracks ADD COLUMN genre VARCHAR(50) DEFAULT 'Tamil'",
+                "ALTER TABLE music_tracks ADD COLUMN is_trending BOOLEAN DEFAULT TRUE",
+                "ALTER TABLE music_tracks ADD COLUMN cover_url VARCHAR(500) NULL",
+                "ALTER TABLE music_tracks ADD COLUMN duration_seconds FLOAT DEFAULT 60.0",
+                "ALTER TABLE users ADD COLUMN reset_otp VARCHAR(6) NULL",
+                "ALTER TABLE users ADD COLUMN reset_otp_expires DATETIME NULL",
+                "ALTER TABLE users ADD COLUMN reset_otp_verified BOOLEAN DEFAULT FALSE",
+            ]:
+                try:
+                    conn.execute(text(stmt))
+                    conn.commit()
+                except Exception:
+                    pass
 
         db = SessionLocal()
         try:
@@ -343,7 +366,22 @@ def change_password(
     db.commit()
     return {"success": True, "message": "Password changed successfully"}
 
+@auth_router.post("/forgot-password")
+def forgot_password(payload: ForgotPasswordRequest, db: Session = Depends(get_db)) -> dict:
+    AuthService.create_otp(db, payload.identifier)
+    return {"success": True, "message": "If that account exists, an OTP has been sent."}
 
+
+@auth_router.post("/verify-otp")
+def verify_otp(payload: VerifyOtpRequest, db: Session = Depends(get_db)) -> dict:
+    AuthService.verify_otp(db, payload.identifier, payload.otp)
+    return {"success": True, "message": "OTP verified."}
+
+
+@auth_router.post("/reset-password")
+def reset_password_endpoint(payload: ResetPasswordRequest, db: Session = Depends(get_db)) -> dict:
+    AuthService.reset_password_with_otp(db, payload.identifier, payload.otp, payload.new_password)
+    return {"success": True, "message": "Password reset successfully."}
 
 routers = [
     auth_router,

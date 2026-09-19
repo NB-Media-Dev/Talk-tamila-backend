@@ -1,4 +1,7 @@
 import random
+from datetime import datetime, timedelta, timezone
+from app.utils.email import send_otp_email
+from app.utils.sms import send_otp_sms
 from typing import Optional
 from sqlalchemy.orm import Session
 from fastapi import HTTPException, status
@@ -27,6 +30,66 @@ class AuthService:
             return None
         if not verify_password(password, user.password):
             return None
+        return user
+
+    @staticmethod
+    def get_by_identifier(db: Session, identifier: str) -> Optional[User]:
+        if "@" in identifier:
+            return AuthService.get_by_email(db, identifier)
+        return db.query(User).filter(User.mobile_no == identifier).first()
+
+    @staticmethod
+    def create_otp(db: Session, identifier: str) -> None:
+        user = AuthService.get_by_identifier(db, identifier)
+        if not user:
+            # Don't reveal whether the account exists
+            return
+
+        otp = f"{random.randint(100000, 999999)}"
+        user.reset_otp = otp
+        user.reset_otp_expires = datetime.now(timezone.utc) + timedelta(minutes=10)
+        user.reset_otp_verified = False
+        db.commit()
+
+        if "@" in identifier:
+            send_otp_email(user.email, otp)
+        else:
+            send_otp_sms(user.mobile_no, otp)
+
+    @staticmethod
+    def _check_otp_valid(user: User, otp: str) -> None:
+        if not user.reset_otp or user.reset_otp != otp:
+            raise HTTPException(status_code=400, detail="Invalid or expired OTP.")
+        expires = user.reset_otp_expires
+        if expires and expires.tzinfo is None:
+            expires = expires.replace(tzinfo=timezone.utc)
+        if not expires or expires < datetime.now(timezone.utc):
+            raise HTTPException(status_code=400, detail="Invalid or expired OTP.")
+
+    @staticmethod
+    def verify_otp(db: Session, identifier: str, otp: str) -> None:
+        user = AuthService.get_by_identifier(db, identifier)
+        if not user:
+            raise HTTPException(status_code=400, detail="Invalid or expired OTP.")
+        AuthService._check_otp_valid(user, otp)
+        user.reset_otp_verified = True
+        db.commit()
+
+    @staticmethod
+    def reset_password_with_otp(db: Session, identifier: str, otp: str, new_password: str) -> User:
+        user = AuthService.get_by_identifier(db, identifier)
+        if not user:
+            raise HTTPException(status_code=400, detail="Invalid or expired OTP.")
+        AuthService._check_otp_valid(user, otp)
+        if not user.reset_otp_verified:
+            raise HTTPException(status_code=400, detail="OTP not verified yet.")
+
+        user.password = get_password_hash(new_password)
+        user.reset_otp = None
+        user.reset_otp_expires = None
+        user.reset_otp_verified = False
+        db.commit()
+        db.refresh(user)
         return user
 
     @staticmethod
