@@ -112,6 +112,7 @@ from app.common.schemas.story import (
     StoryStatsResponse,
     StoryWithMetrics,
     StoryPauseRequest,
+    MyStoryAnalyticsResponse,
 )
 from app.common.services.music_service import MusicService
 from app.common.services.story_service import (
@@ -171,6 +172,16 @@ def get_my_story_stats(
     ever created by the current user — active and expired.
     """
     return StoryService.get_my_stats(current_user, db)
+
+
+@router.get("/my-story-analytics", response_model=MyStoryAnalyticsResponse)
+def get_my_story_analytics(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    """Detailed Instagram-style breakdown of who viewed, liked, and replied to the logged-in user's active stories."""
+    return StoryService.get_my_story_analytics(current_user, db)
+
 
 
 @router.get("/archived", response_model=List[StoryArchivedItem])

@@ -101,6 +101,7 @@ class ActivityViewer(BaseModel):
     avatar_url: Optional[str] = None
     full_name: Optional[str] = None
     viewed_at: str
+    liked: bool = False
 
 
 class ActivityLiker(BaseModel):
@@ -285,3 +286,65 @@ class StoryWithMetrics(BaseModel):
     shares_count: int
     engagement_rate: float = 0.0
     model_config = ConfigDict(from_attributes=True)
+
+
+class AnalyticsUserProfile(BaseModel):
+    id: int
+    user_id: int
+    username: str
+    email: str
+    full_name: str
+    model_config = ConfigDict(from_attributes=True)
+
+
+class ViewerAnalyticsItem(BaseModel):
+    view_id: int
+    viewed_at: Optional[str] = None
+    user: Optional[AnalyticsUserProfile] = None
+    model_config = ConfigDict(from_attributes=True)
+
+
+class LikerAnalyticsItem(BaseModel):
+    like_id: int
+    liked_at: Optional[str] = None
+    user: Optional[AnalyticsUserProfile] = None
+    model_config = ConfigDict(from_attributes=True)
+
+
+class ReplierAnalyticsItem(BaseModel):
+    reply_id: int
+    text: str
+    created_at: Optional[str] = None
+    user: Optional[AnalyticsUserProfile] = None
+    model_config = ConfigDict(from_attributes=True)
+
+
+class StoryAnalyticsDetail(BaseModel):
+    story_id: int
+    media_url: str
+    media_type: str
+    caption: Optional[str] = None
+    created_at: Optional[str] = None
+    expires_at: Optional[str] = None
+    total_views: int
+    total_likes: int
+    total_replies: int
+    viewers: List[ViewerAnalyticsItem] = Field(default_factory=list)
+    likers: List[LikerAnalyticsItem] = Field(default_factory=list)
+    replies: List[ReplierAnalyticsItem] = Field(default_factory=list)
+    model_config = ConfigDict(from_attributes=True)
+
+
+class StoryAnalyticsSummary(BaseModel):
+    total_active_stories: int
+    total_views: int
+    total_likes: int
+    total_replies: int
+    model_config = ConfigDict(from_attributes=True)
+
+
+class MyStoryAnalyticsResponse(BaseModel):
+    summary: StoryAnalyticsSummary
+    stories: List[StoryAnalyticsDetail]
+    model_config = ConfigDict(from_attributes=True)
+

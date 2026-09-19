@@ -20,7 +20,6 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
-from sqlalchemy import text
 from sqlalchemy.orm import Session
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
@@ -82,25 +81,6 @@ async def lifespan(app: FastAPI):
     try:
         Base.metadata.create_all(bind=engine)
 
-        with engine.connect() as conn:
-            for stmt in [
-                "ALTER TABLE stories MODIFY COLUMN media_type VARCHAR(20) NOT NULL DEFAULT 'image'",
-                "ALTER TABLE stories MODIFY COLUMN media_url LONGTEXT NOT NULL",
-                "ALTER TABLE stories MODIFY COLUMN caption LONGTEXT NULL",
-                "ALTER TABLE stories MODIFY COLUMN music_url LONGTEXT NULL",
-                "ALTER TABLE stories MODIFY COLUMN music_thumbnail LONGTEXT NULL",
-                "ALTER TABLE music_tracks ADD COLUMN language VARCHAR(50) DEFAULT 'Tamil'",
-                "ALTER TABLE music_tracks ADD COLUMN genre VARCHAR(50) DEFAULT 'Tamil'",
-                "ALTER TABLE music_tracks ADD COLUMN is_trending BOOLEAN DEFAULT TRUE",
-                "ALTER TABLE music_tracks ADD COLUMN cover_url VARCHAR(500) NULL",
-                "ALTER TABLE music_tracks ADD COLUMN duration_seconds FLOAT DEFAULT 60.0",
-            ]:
-                try:
-                    conn.execute(text(stmt))
-                    conn.commit()
-                except Exception:
-                    pass
-
         db = SessionLocal()
         try:
             if db.query(User).first() is None:
@@ -108,7 +88,7 @@ async def lifespan(app: FastAPI):
         finally:
             db.close()
     except Exception as e:
-        print(f"Database auto-seeding/migration note: {e}")
+        print(f"Database initialization note: {e}")
     yield
 
 
