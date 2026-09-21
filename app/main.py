@@ -222,7 +222,6 @@ def check_availability(
 
 
 @auth_router.post("/signup", status_code=status.HTTP_201_CREATED)
-@auth_router.post("/register", status_code=status.HTTP_201_CREATED)
 def signup(payload: RegisterRequest, db: Session = Depends(get_db)) -> dict:
     user = AuthService.register(db, payload)
     access_token = create_access_token(user.id)
