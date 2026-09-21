@@ -267,24 +267,6 @@ login_schema_extra = {
 }
 
 
-@auth_router.get("/profile", status_code=status.HTTP_200_OK)
-def get_profile(current_user: User = Depends(get_current_user)) -> dict:
-    """
-    Retrieve the profile details of the currently authenticated logged-in user.
-    """
-    return {
-        "user": {
-            "id": current_user.user_id,
-            "user_id": current_user.user_id,
-            "username": current_user.username,
-            "email": current_user.email,
-            "full_name": current_user.full_name,
-            "mobile_no": current_user.mobile_no,
-            "dob": current_user.dob.isoformat() if current_user.dob else None,
-            "role": current_user.role,
-        }
-    }
-
 @auth_router.post("/login", openapi_extra=login_schema_extra ,status_code=status.HTTP_200_OK)
 async def login(request: Request, db: Session = Depends(get_db)) -> dict:
     content_type = request.headers.get("content-type", "")
