@@ -7,7 +7,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import HTTPException, UploadFile, status
 from sqlalchemy import desc, func, or_
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.orm import Session, joinedload, selectinload
 
 from app.common.models.social import Notification
 from app.common.models.story import (
@@ -122,8 +122,8 @@ def fetch_batch_story_stats(story_ids: List[int], current_user_id: Optional[int]
             "liked_by_me": set(),
         }
 
-    views_rows = db.query(StoryView.story_id, func.count(StoryView.view_id)).filter(StoryView.story_id.in_(story_ids)).group_by(StoryView.story_id).all()
-    likes_rows = db.query(StoryLike.story_id, func.count(StoryLike.story_likes_id)).filter(StoryLike.story_id.in_(story_ids)).group_by(StoryLike.story_id).all()
+    views_rows = db.query(StoryView.story_id, func.count(func.distinct(StoryView.user_id))).filter(StoryView.story_id.in_(story_ids)).group_by(StoryView.story_id).all()
+    likes_rows = db.query(StoryLike.story_id, func.count(func.distinct(StoryLike.user_id))).filter(StoryLike.story_id.in_(story_ids)).group_by(StoryLike.story_id).all()
     replies_rows = db.query(StoryReply.story_id, func.count(StoryReply.reply_id)).filter(StoryReply.story_id.in_(story_ids)).group_by(StoryReply.story_id).all()
     shares_rows = db.query(StoryShare.story_id, func.count(StoryShare.share_id)).filter(StoryShare.story_id.in_(story_ids)).group_by(StoryShare.story_id).all()
 
@@ -159,8 +159,8 @@ def build_story_item(
         viewed_by_me = story.story_id in batch_stats["viewed_by_me"]
         liked_by_me = story.story_id in batch_stats["liked_by_me"]
     else:
-        views_count = db.query(func.count(StoryView.view_id)).filter(StoryView.story_id == story.story_id).scalar() or 0
-        likes_count = db.query(func.count(StoryLike.story_likes_id)).filter(StoryLike.story_id == story.story_id).scalar() or 0
+        views_count = db.query(func.count(func.distinct(StoryView.user_id))).filter(StoryView.story_id == story.story_id).scalar() or 0
+        likes_count = db.query(func.count(func.distinct(StoryLike.user_id))).filter(StoryLike.story_id == story.story_id).scalar() or 0
         replies_count = db.query(func.count(StoryReply.reply_id)).filter(StoryReply.story_id == story.story_id).scalar() or 0
         shares_count = db.query(func.count(StoryShare.share_id)).filter(StoryShare.story_id == story.story_id).scalar() or 0
 
@@ -580,12 +580,17 @@ class StoryService:
             view = StoryView(
                 story_id=story_id,
                 user_id=current_user.id,
+                user_name=current_user.username,
                 viewed_at=make_naive(utc_now()),
             )
             db.add(view)
             db.commit()
 
-        views_count = db.query(func.count(StoryView.view_id)).filter(StoryView.story_id == story_id).scalar() or 0
+        views_count = (
+            db.query(func.count(func.distinct(StoryView.user_id)))
+            .filter(StoryView.story_id == story_id)
+            .scalar() or 0
+        )
         return {"success": True, "message": "Story viewed", "story_id": story_id, "views_count": views_count}
 
     @staticmethod
@@ -593,12 +598,6 @@ class StoryService:
         story = db.get(Story, story_id)
         if not story:
             raise HTTPException(status_code=404, detail="Story not found")
-
-        if story.user_id == current_user.id:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Cannot like your own story. Liking is only available for others' stories.",
-            )
 
         existing = (
             db.query(StoryLike)
@@ -610,8 +609,11 @@ class StoryService:
                 story_id=story_id,
                 user_id=current_user.id,
                 user_name=current_user.username,
+                liked_at=make_naive(utc_now()),
             )
             db.add(like)
+            db.commit()
+
             if story.user_id != current_user.id:
                 try:
                     notif = Notification(
@@ -623,11 +625,15 @@ class StoryService:
                         created_at=make_naive(utc_now()),
                     )
                     db.add(notif)
+                    db.commit()
                 except Exception:
-                    pass
-            db.commit()
+                    db.rollback()
 
-        likes_count = db.query(func.count(StoryLike.story_likes_id)).filter(StoryLike.story_id == story_id).scalar() or 0
+        likes_count = (
+            db.query(func.count(func.distinct(StoryLike.user_id)))
+            .filter(StoryLike.story_id == story_id)
+            .scalar() or 0
+        )
         return {"story_id": story_id, "likes_count": likes_count, "liked_by_me": True, "success": True}
 
     @staticmethod
@@ -645,7 +651,11 @@ class StoryService:
             db.delete(existing)
             db.commit()
 
-        likes_count = db.query(func.count(StoryLike.story_likes_id)).filter(StoryLike.story_id == story_id).scalar() or 0
+        likes_count = (
+            db.query(func.count(func.distinct(StoryLike.user_id)))
+            .filter(StoryLike.story_id == story_id)
+            .scalar() or 0
+        )
         return {"story_id": story_id, "likes_count": likes_count, "liked_by_me": False, "success": True}
 
     @staticmethod
@@ -683,19 +693,16 @@ class StoryService:
         if not story:
             raise HTTPException(status_code=404, detail="Story not found")
 
-        if story.user_id == current_user.id:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Cannot reply to your own story. Replying is only available for others' stories.",
-            )
-
         reply = StoryReply(
             story_id=story_id,
             user_id=current_user.id,
+            user_name=current_user.username,
             text=text,
             created_at=make_naive(utc_now()),
         )
         db.add(reply)
+        db.commit()
+        db.refresh(reply)
 
         if story.user_id != current_user.id:
             try:
@@ -708,11 +715,10 @@ class StoryService:
                     created_at=make_naive(utc_now()),
                 )
                 db.add(notif)
+                db.commit()
             except Exception:
-                pass
+                db.rollback()
 
-        db.commit()
-        db.refresh(reply)
         return {
             "success": True,
             "message": "Reply sent successfully",
@@ -953,45 +959,72 @@ class StoryService:
         if story.user_id != current_user.id and not current_user.is_admin:
             raise HTTPException(status_code=403, detail="Only the story author can view viewer activity.")
 
-        likes = db.query(StoryLike).options(joinedload(StoryLike.user)).filter(StoryLike.story_id == story_id).all()
+        likes = db.query(StoryLike).options(joinedload(StoryLike.user)).filter(StoryLike.story_id == story_id).order_by(desc(StoryLike.liked_at)).all()
         likers_list: List[ActivityLiker] = []
+        liked_user_ids = set()
         liked_by_me = False
         for l in likes:
             if l.user_id == current_user.id:
                 liked_by_me = True
-            u = l.user
-            likers_list.append(
-                ActivityLiker(
-                    user_id=l.user_id,
-                    username=u.username if u else (l.user_name or f"user_{l.user_id}"),
-                    avatar_url=u.avatar_url if u else None,
-                    full_name=u.full_name if u else (l.user_name or f"User {l.user_id}"),
+            if l.user_id not in liked_user_ids:
+                liked_user_ids.add(l.user_id)
+                u = l.user
+                likers_list.append(
+                    ActivityLiker(
+                        user_id=l.user_id,
+                        username=u.username if u else (l.user_name or f"user_{l.user_id}"),
+                        avatar_url=u.avatar_url if u else None,
+                        full_name=u.full_name if u else (l.user_name or f"User {l.user_id}"),
+                    )
                 )
-            )
 
         views = (
             db.query(StoryView)
             .options(joinedload(StoryView.user))
             .filter(StoryView.story_id == story_id)
-            .order_by(desc(StoryView.viewed_at))
+            .order_by(StoryView.viewed_at.asc())
             .all()
         )
         viewers_list: List[ActivityViewer] = []
+        seen_viewers = set()
         for v in views:
-            u = v.user
-            viewers_list.append(
-                ActivityViewer(
-                    user_id=v.user_id,
-                    username=u.username if u else f"user_{v.user_id}",
-                    avatar_url=u.avatar_url if u else None,
-                    full_name=u.full_name if u else f"User {v.user_id}",
-                    viewed_at=format_iso(v.viewed_at) or utc_now().isoformat(),
+            if v.user_id not in seen_viewers:
+                seen_viewers.add(v.user_id)
+                u = v.user
+                is_liked = v.user_id in liked_user_ids
+                viewers_list.append(
+                    ActivityViewer(
+                        user_id=v.user_id,
+                        username=u.username if u else (v.user_name or f"user_{v.user_id}"),
+                        avatar_url=u.avatar_url if u else None,
+                        full_name=u.full_name if u else (v.user_name or f"User {v.user_id}"),
+                        viewed_at=format_iso(v.viewed_at) or utc_now().isoformat(),
+                        liked=is_liked,
+                    )
                 )
-            )
+
+        # Ensure any likers who don't have an explicit view row are also present in the combined viewers list
+        for l in likes:
+            if l.user_id not in seen_viewers:
+                seen_viewers.add(l.user_id)
+                u = l.user
+                viewers_list.append(
+                    ActivityViewer(
+                        user_id=l.user_id,
+                        username=u.username if u else (l.user_name or f"user_{l.user_id}"),
+                        avatar_url=u.avatar_url if u else None,
+                        full_name=u.full_name if u else (l.user_name or f"User {l.user_id}"),
+                        viewed_at=format_iso(l.liked_at) or utc_now().isoformat(),
+                        liked=True,
+                    )
+                )
+
+        # Sort combined activity list: users who liked on top, then non-likers
+        viewers_list.sort(key=lambda x: (0 if x.liked else 1))
 
         return StoryActivityResponse(
             story_id=story_id,
-            total_views=len(viewers_list),
+            total_views=len(seen_viewers),
             total_likes=len(likers_list),
             liked_by_me=liked_by_me,
             viewers=viewers_list,
@@ -1291,3 +1324,102 @@ class StoryService:
                 )
             )
         return result
+
+    @staticmethod
+    def get_my_story_analytics(current_user: User, db: Session) -> Dict[str, Any]:
+        """Fetch detailed Instagram-style breakdown of who viewed, liked, and replied to current user's active stories."""
+        now_naive = make_naive(utc_now())
+
+        stories: List[Story] = (
+            db.query(Story)
+            .options(
+                selectinload(Story.views).selectinload(StoryView.user),
+                selectinload(Story.likes).selectinload(StoryLike.user),
+                selectinload(Story.replies).selectinload(StoryReply.user),
+            )
+            .filter(
+                Story.user_id == current_user.user_id,
+                or_(Story.expires_at.is_(None), Story.expires_at > now_naive),
+            )
+            .order_by(desc(Story.created_at))
+            .all()
+        )
+
+        def format_user_dict(u: Optional[User]) -> Optional[Dict[str, Any]]:
+            if not u:
+                return None
+            return {
+                "id": u.user_id,
+                "user_id": u.user_id,
+                "username": u.username,
+                "email": u.email,
+                "full_name": u.full_name,
+            }
+
+        stories_data: List[Dict[str, Any]] = []
+        total_views_count = 0
+        total_likes_count = 0
+        total_replies_count = 0
+
+        for story in stories:
+            viewers_list = [
+                {
+                    "view_id": v.view_id,
+                    "viewed_at": format_iso(v.viewed_at),
+                    "user": format_user_dict(v.user),
+                }
+                for v in story.views
+            ]
+
+            likers_list = [
+                {
+                    "like_id": lk.story_likes_id,
+                    "liked_at": format_iso(lk.liked_at),
+                    "user": format_user_dict(lk.user),
+                }
+                for lk in story.likes
+            ]
+
+            replies_list = [
+                {
+                    "reply_id": r.reply_id,
+                    "text": r.text,
+                    "created_at": format_iso(r.created_at),
+                    "user": format_user_dict(r.user),
+                }
+                for r in story.replies
+            ]
+
+            v_count = len(viewers_list)
+            l_count = len(likers_list)
+            r_count = len(replies_list)
+
+            total_views_count += v_count
+            total_likes_count += l_count
+            total_replies_count += r_count
+
+            stories_data.append({
+                "story_id": story.story_id,
+                "media_url": story.media_url,
+                "media_type": story.media_type or "image",
+                "caption": story.caption,
+                "created_at": format_iso(story.created_at),
+                "expires_at": format_iso(story.expires_at),
+                "total_views": v_count,
+                "total_likes": l_count,
+                "total_replies": r_count,
+                "viewers": viewers_list,
+                "likers": likers_list,
+                "replies": replies_list,
+            })
+
+        return {
+            "summary": {
+                "total_active_stories": len(stories_data),
+                "total_views": total_views_count,
+                "total_likes": total_likes_count,
+                "total_replies": total_replies_count,
+            },
+            "stories": stories_data,
+        }
+

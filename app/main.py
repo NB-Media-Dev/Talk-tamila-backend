@@ -21,7 +21,6 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
-from sqlalchemy import text
 from sqlalchemy.orm import Session
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
@@ -112,7 +111,7 @@ async def lifespan(app: FastAPI):
         finally:
             db.close()
     except Exception as e:
-        print(f"Database auto-seeding/migration note: {e}")
+        print(f"Database initialization note: {e}")
     yield
 
 
