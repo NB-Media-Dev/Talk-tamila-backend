@@ -390,6 +390,20 @@ def get_me(current_user: User = Depends(get_current_user)) -> dict:
         "followers_count": current_user.followers_count,
     }
 
+@auth_router.patch("/me")
+def update_me(
+    payload: dict,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    allowed = ["bio", "location", "avatar_url", "username", "full_name"]
+    for field, value in payload.items():
+        if field in allowed:
+            setattr(current_user, field, value)
+    db.commit()
+    db.refresh(current_user)
+    return {"success": True, "message": "Profile updated."}
+
 
 @auth_router.post("/change-password")
 def change_password(
