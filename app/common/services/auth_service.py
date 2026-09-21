@@ -53,7 +53,6 @@ class AuthService:
     def create_otp(db: Session, identifier: str) -> None:
         user = AuthService.get_by_identifier(db, identifier)
         if not user:
-            # Don't reveal whether the account exists
             return
 
         otp = f"{secrets.randbelow(900000) + 100000}"
@@ -63,8 +62,6 @@ class AuthService:
         user.reset_otp_attempts = 0
         db.commit()
 
-        # A delivery failure must not turn into a 500, otherwise the response
-        # reveals whether the account exists.
         try:
             if "@" in identifier:
                 send_otp_email(user.email, otp)
@@ -88,8 +85,6 @@ class AuthService:
             raise invalid
 
         if not secrets.compare_digest(user.reset_otp, otp):
-            # Limit guessing: after MAX_OTP_ATTEMPTS wrong codes the OTP is void
-            # and the user has to request a new one.
             attempts = (user.reset_otp_attempts or 0) + 1
             if attempts >= MAX_OTP_ATTEMPTS:
                 AuthService._clear_otp(db, user)

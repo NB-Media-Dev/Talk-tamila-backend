@@ -623,8 +623,6 @@ def unmute_creator(
     return StoryService.unmute_creator(user_id, current_user, db)
 
 
-# ── Close Friends & Follow Management ─────────────────────────────────────────
-
 @router.post("/close-friends/{friend_id:int}")
 def add_close_friend(
     friend_id: int,

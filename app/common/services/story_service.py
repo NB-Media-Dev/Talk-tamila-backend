@@ -593,7 +593,6 @@ class StoryService:
         if not story or story.is_deleted:
             raise HTTPException(status_code=404, detail="Story not found")
 
-        # Enforce story privacy permissions
         aud = (story.audience or "PUBLIC").upper()
         if aud != "PUBLIC" and (not current_user_id or current_user_id != story.user_id):
             if aud == "FOLLOWERS":
@@ -1214,8 +1213,6 @@ class StoryService:
                 detail="Only the author who created this story can delete it.",
             )
 
-        # Soft delete: update is_deleted and deleted_at flag so it is removed from UI,
-        # but keep the story record and related views/likes/replies stored in the database.
         story.is_deleted = True
         story.deleted_at = make_naive(utc_now())
         db.commit()
@@ -1275,7 +1272,6 @@ class StoryService:
                     )
                 )
 
-        # Ensure any likers who don't have an explicit view row are also present in the combined viewers list
         for l in likes:
             if l.user_id not in seen_viewers:
                 seen_viewers.add(l.user_id)
@@ -1291,7 +1287,6 @@ class StoryService:
                     )
                 )
 
-        # Sort combined activity list: users who liked on top, then non-likers
         viewers_list.sort(key=lambda x: (0 if x.liked else 1))
 
         return StoryActivityResponse(

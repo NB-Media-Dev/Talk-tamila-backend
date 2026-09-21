@@ -1,0 +1,8 @@
+ALTER TABLE story_views
+    ADD COLUMN IF NOT EXISTS user_name VARCHAR(100) NULL;
+
+ALTER TABLE story_likes
+    ADD COLUMN IF NOT EXISTS user_name VARCHAR(100) NULL;
+
+ALTER TABLE story_replies
+    ADD COLUMN IF NOT EXISTS user_name VARCHAR(100) NULL;

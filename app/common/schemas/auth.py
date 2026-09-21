@@ -34,10 +34,8 @@ class RegisterRequest(BaseModel):
     password: str = Field(..., min_length=6)
     first_name: str
     last_name: str
-    # Older clients may send only full_name; it is split into first/last below.
     full_name: Optional[str] = None
     mobile_no: str
-    # "admin" is intentionally not self-registrable; create admins via seed/superadmin tooling.
     role: Literal["influencer", "freelancer"] = "influencer"
     dob: date
 
@@ -113,7 +111,7 @@ class UserResponse(BaseModel):
 
 
 class ForgotPasswordRequest(BaseModel):
-    identifier: str  # email or mobile number
+    identifier: str
 
     @field_validator("identifier")
     @classmethod

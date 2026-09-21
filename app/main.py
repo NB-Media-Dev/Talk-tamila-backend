@@ -103,10 +103,13 @@ async def lifespan(app: FastAPI):
                 "ALTER TABLE users ADD COLUMN reset_otp_attempts INT NOT NULL DEFAULT 0",
                 "DELETE v1 FROM story_views v1 INNER JOIN story_views v2 WHERE v1.story_id = v2.story_id AND v1.user_id = v2.user_id AND v1.view_id > v2.view_id",
                 "ALTER TABLE story_views ADD UNIQUE INDEX uq_story_views_story_user (story_id, user_id)",
+                "ALTER TABLE story_views ADD COLUMN user_name VARCHAR(100) NULL",
                 "DELETE l1 FROM story_likes l1 INNER JOIN story_likes l2 WHERE l1.story_id = l2.story_id AND l1.user_id = l2.user_id AND l1.story_likes_id > l2.story_likes_id",
                 "ALTER TABLE story_likes ADD UNIQUE INDEX uq_story_likes_story_user (story_id, user_id)",
+                "ALTER TABLE story_likes ADD COLUMN user_name VARCHAR(100) NULL",
                 "DELETE s1 FROM story_saves s1 INNER JOIN story_saves s2 WHERE s1.story_id = s2.story_id AND s1.user_id = s2.user_id AND s1.save_id > s2.save_id",
                 "ALTER TABLE story_saves ADD UNIQUE INDEX uq_story_saves_story_user (story_id, user_id)",
+                "ALTER TABLE story_replies ADD COLUMN user_name VARCHAR(100) NULL",
             ]:
                 try:
                     conn.execute(text(stmt))
@@ -116,7 +119,6 @@ async def lifespan(app: FastAPI):
 
         db = SessionLocal()
         try:
-            # Demo accounts (admin@talktamila.com / admin123 ...) are for local dev only.
             if settings.ENVIRONMENT.lower() != "production" and db.query(User).first() is None:
                 seed_db_data(db)
         finally:
@@ -220,6 +222,7 @@ def check_availability(
 
 
 @auth_router.post("/signup", status_code=status.HTTP_201_CREATED)
+@auth_router.post("/register", status_code=status.HTTP_201_CREATED)
 def signup(payload: RegisterRequest, db: Session = Depends(get_db)) -> dict:
     user = AuthService.register(db, payload)
     access_token = create_access_token(user.id)
