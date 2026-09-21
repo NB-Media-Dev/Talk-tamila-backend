@@ -1,4 +1,6 @@
+import logging
 import random
+import secrets
 from datetime import datetime, timedelta, timezone
 from app.utils.email import send_otp_email
 from app.utils.sms import send_otp_sms
@@ -10,6 +12,11 @@ from app.common.models.user import User
 from app.common.models.social import Profile
 from app.common.schemas.auth import RegisterRequest
 from app.core.security import create_access_token, get_password_hash, verify_password
+
+
+logger = logging.getLogger("talktamila.auth")
+
+MAX_OTP_ATTEMPTS = 5
 
 
 class AuthService:
@@ -49,21 +56,48 @@ class AuthService:
             # Don't reveal whether the account exists
             return
 
-        otp = f"{random.randint(100000, 999999)}"
+        otp = f"{secrets.randbelow(900000) + 100000}"
         user.reset_otp = otp
         user.reset_otp_expires = datetime.now(timezone.utc) + timedelta(minutes=10)
         user.reset_otp_verified = False
+        user.reset_otp_attempts = 0
         db.commit()
 
-        if "@" in identifier:
-            send_otp_email(user.email, otp)
-        else:
-            send_otp_sms(user.mobile_no, otp)
+        # A delivery failure must not turn into a 500, otherwise the response
+        # reveals whether the account exists.
+        try:
+            if "@" in identifier:
+                send_otp_email(user.email, otp)
+            else:
+                send_otp_sms(user.mobile_no, otp)
+        except Exception:
+            logger.exception("Failed to deliver password-reset OTP")
 
     @staticmethod
-    def _check_otp_valid(user: User, otp: str) -> None:
-        if not user.reset_otp or user.reset_otp != otp:
-            raise HTTPException(status_code=400, detail="Invalid or expired OTP.")
+    def _clear_otp(db: Session, user: User) -> None:
+        user.reset_otp = None
+        user.reset_otp_expires = None
+        user.reset_otp_verified = False
+        user.reset_otp_attempts = 0
+        db.commit()
+
+    @staticmethod
+    def _check_otp_valid(db: Session, user: User, otp: str) -> None:
+        invalid = HTTPException(status_code=400, detail="Invalid or expired OTP.")
+        if not user.reset_otp:
+            raise invalid
+
+        if not secrets.compare_digest(user.reset_otp, otp):
+            # Limit guessing: after MAX_OTP_ATTEMPTS wrong codes the OTP is void
+            # and the user has to request a new one.
+            attempts = (user.reset_otp_attempts or 0) + 1
+            if attempts >= MAX_OTP_ATTEMPTS:
+                AuthService._clear_otp(db, user)
+            else:
+                user.reset_otp_attempts = attempts
+                db.commit()
+            raise invalid
+
         expires = user.reset_otp_expires
         if expires and expires.tzinfo is None:
             expires = expires.replace(tzinfo=timezone.utc)
@@ -75,7 +109,7 @@ class AuthService:
         user = AuthService.get_by_identifier(db, identifier)
         if not user:
             raise HTTPException(status_code=400, detail="Invalid or expired OTP.")
-        AuthService._check_otp_valid(user, otp)
+        AuthService._check_otp_valid(db, user, otp)
         user.reset_otp_verified = True
         db.commit()
 
@@ -84,7 +118,7 @@ class AuthService:
         user = AuthService.get_by_identifier(db, identifier)
         if not user:
             raise HTTPException(status_code=400, detail="Invalid or expired OTP.")
-        AuthService._check_otp_valid(user, otp)
+        AuthService._check_otp_valid(db, user, otp)
         if not user.reset_otp_verified:
             raise HTTPException(status_code=400, detail="OTP not verified yet.")
 
@@ -92,6 +126,7 @@ class AuthService:
         user.reset_otp = None
         user.reset_otp_expires = None
         user.reset_otp_verified = False
+        user.reset_otp_attempts = 0
         db.commit()
         db.refresh(user)
         return user

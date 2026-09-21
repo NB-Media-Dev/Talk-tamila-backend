@@ -26,6 +26,7 @@ class User(Base):
     reset_otp: Mapped[Optional[str]] = mapped_column(String(6), nullable=True)
     reset_otp_expires: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     reset_otp_verified: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    reset_otp_attempts: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
 
     @property
     def id(self) -> int:

@@ -98,6 +98,7 @@ async def lifespan(app: FastAPI):
                 "ALTER TABLE users ADD COLUMN reset_otp VARCHAR(6) NULL",
                 "ALTER TABLE users ADD COLUMN reset_otp_expires DATETIME NULL",
                 "ALTER TABLE users ADD COLUMN reset_otp_verified BOOLEAN DEFAULT FALSE",
+                "ALTER TABLE users ADD COLUMN reset_otp_attempts INT NOT NULL DEFAULT 0",
             ]:
                 try:
                     conn.execute(text(stmt))
@@ -107,7 +108,8 @@ async def lifespan(app: FastAPI):
 
         db = SessionLocal()
         try:
-            if db.query(User).first() is None:
+            # Demo accounts (admin@talktamila.com / admin123 ...) are for local dev only.
+            if settings.ENVIRONMENT.lower() != "production" and db.query(User).first() is None:
                 seed_db_data(db)
         finally:
             db.close()

@@ -23,100 +23,56 @@ def get_db() -> Generator[Session, None, None]:
         db.close()
 
 
-def get_current_user(
-    request: Request,
-    token: str | None = Depends(oauth2_scheme),
-    db: Session = Depends(get_db),
-) -> User:
-    credentials_exception = HTTPException(
-        status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Could not validate credentials",
-        headers={"WWW-Authenticate": "Bearer"},
-    )
+def _extract_token(request: Request, token: Optional[str]) -> Optional[str]:
+    if token:
+        return token
+    auth_header = request.headers.get("Authorization")
+    if auth_header and auth_header.startswith("Bearer "):
+        return auth_header.split(" ", 1)[1].strip()
+    return None
 
-    user: Optional[User] = None
 
-    auth_header = request.headers.get("Authorization") or request.headers.get("authorization")
-    raw_token = token
-    if not raw_token and auth_header and auth_header.startswith("Bearer "):
-        raw_token = auth_header.split(" ", 1)[1].strip()
+def _user_from_access_token(db: Session, raw_token: Optional[str]) -> Optional[User]:
+    """Resolve the user for a valid *access* token, otherwise None.
 
-    if raw_token:
-        try:
-            payload = decode_token(raw_token)
-            uid = payload.get("user_id") or payload.get("id") or payload.get("sub")
-            if uid is not None:
-                try:
-                    user = db.get(User, int(uid))
-                except (ValueError, TypeError):
-                    pass
-                if not user:
-                    user = (
-                        db.query(User)
-                        .filter((User.email == str(uid)) | (User.username == str(uid)))
-                        .first()
-                    )
-
-            if not user and payload.get("email"):
-                user = db.query(User).filter(User.email == str(payload.get("email"))).first()
-        except Exception:
-            pass
-
-    if not user and request:
-        x_uid = request.headers.get("X-User-Id") or request.headers.get("x-user-id")
-        if x_uid and str(x_uid).isdigit():
-            user = db.get(User, int(x_uid))
-
+    Identity comes only from a signed JWT. Refresh tokens are rejected, and
+    there is no header / environment based fallback.
+    """
+    if not raw_token:
+        return None
+    try:
+        payload = decode_token(raw_token)
+        if payload.get("type") != "access":
+            return None
+        user = db.get(User, int(payload.get("sub")))
+    except Exception:
+        return None
     if user and user.is_active:
         return user
+    return None
 
-    if settings.ENVIRONMENT != "production" and not raw_token:
-        x_uid = request.headers.get("X-User-Id") or request.headers.get("x-user-id")
-        if x_uid and str(x_uid).isdigit():
-            explicit_user = db.get(User, int(x_uid))
-            if explicit_user:
-                return explicit_user
 
-        fallback_user = db.query(User).order_by(User.user_id.asc()).first()
-        if fallback_user:
-            return fallback_user
-
-    raise credentials_exception
+def get_current_user(
+    request: Request,
+    token: Optional[str] = Depends(oauth2_scheme),
+    db: Session = Depends(get_db),
+) -> User:
+    user = _user_from_access_token(db, _extract_token(request, token))
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Could not validate credentials",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    return user
 
 
 def get_optional_current_user(
     request: Request,
-    token: str | None = Depends(oauth2_scheme),
+    token: Optional[str] = Depends(oauth2_scheme),
     db: Session = Depends(get_db),
 ) -> Optional[User]:
-    auth_header = request.headers.get("Authorization") or request.headers.get("authorization")
-    raw_token = token
-    if not raw_token and auth_header and auth_header.startswith("Bearer "):
-        raw_token = auth_header.split(" ", 1)[1].strip()
-
-    user = None
-    if raw_token:
-        try:
-            payload = decode_token(raw_token)
-            uid = payload.get("user_id") or payload.get("id") or payload.get("sub")
-            if uid is not None:
-                try:
-                    user = db.get(User, int(uid))
-                except (ValueError, TypeError):
-                    pass
-                if not user:
-                    user = db.query(User).filter((User.email == str(uid)) | (User.username == str(uid))).first()
-        except Exception:
-            pass
-
-    if not user and request:
-        x_uid = request.headers.get("X-User-Id") or request.headers.get("x-user-id")
-        if x_uid and str(x_uid).isdigit():
-            user = db.get(User, int(x_uid))
-
-    if user and user.is_active:
-        return user
-    return None
+    return _user_from_access_token(db, _extract_token(request, token))
 
 
 def get_current_admin(current_user: User = Depends(get_current_user)) -> User:

@@ -30,7 +30,7 @@ class RegisterRequest(BaseModel):
     last_name: Optional[str] = ""
     full_name: Optional[str] = None
     mobile_no: Optional[str] = None
-    role: Literal["admin", "influencer", "freelancer"] = "influencer"
+    role: Literal["influencer", "freelancer"] = "influencer"
     dob: Optional[date] = None
 
 
