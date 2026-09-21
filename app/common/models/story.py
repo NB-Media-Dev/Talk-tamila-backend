@@ -10,6 +10,7 @@ from sqlalchemy import (
     Numeric,
     String,
     Text,
+    UniqueConstraint,
     func,
 )
 from sqlalchemy.dialects.mysql import LONGTEXT
@@ -25,6 +26,7 @@ class Story(Base):
     user_id: Mapped[int] = mapped_column(
         ForeignKey("users.user_id", ondelete="CASCADE", onupdate="CASCADE"),
         nullable=False,
+        index=True,
     )
     media_url: Mapped[str] = mapped_column(Text().with_variant(LONGTEXT, "mysql"), nullable=False)
     media_type: Mapped[str] = mapped_column(
@@ -33,10 +35,10 @@ class Story(Base):
         nullable=False,
     )
     caption: Mapped[str | None] = mapped_column(Text().with_variant(LONGTEXT, "mysql"), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), index=True)
     expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
     reply: Mapped[str | None] = mapped_column(Text, nullable=True)
-    audience: Mapped[str | None] = mapped_column(String(50), default="public", nullable=True)
+    audience: Mapped[str] = mapped_column(String(50), default="PUBLIC", nullable=False, index=True)
     music_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     music_title: Mapped[str | None] = mapped_column(String(255), nullable=True)
     music_artist: Mapped[str | None] = mapped_column(String(255), nullable=True)
@@ -60,12 +62,32 @@ class Story(Base):
         return self.story_id
 
     @property
+    def author_id(self) -> int:
+        return self.user_id
+
+    @author_id.setter
+    def author_id(self, value: int) -> None:
+        self.user_id = value
+
+    @property
+    def content(self) -> Optional[str]:
+        return self.caption
+
+    @content.setter
+    def content(self, value: Optional[str]) -> None:
+        self.caption = value
+
+    @property
     def has_active_story(self) -> bool:
         return not self.is_deleted
 
 
+
 class StoryView(Base):
     __tablename__ = "story_views"
+    __table_args__ = (
+        UniqueConstraint("story_id", "user_id", name="uq_story_views_story_user"),
+    )
 
     view_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     story_id: Mapped[int] = mapped_column(ForeignKey("stories.story_id", ondelete="CASCADE"), nullable=False)
@@ -79,6 +101,9 @@ class StoryView(Base):
 
 class StoryLike(Base):
     __tablename__ = "story_likes"
+    __table_args__ = (
+        UniqueConstraint("story_id", "user_id", name="uq_story_likes_story_user"),
+    )
 
     story_likes_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     story_id: Mapped[int] = mapped_column(ForeignKey("stories.story_id", ondelete="CASCADE"), nullable=False)
@@ -138,6 +163,9 @@ class StoryMute(Base):
 
 class StorySave(Base):
     __tablename__ = "story_saves"
+    __table_args__ = (
+        UniqueConstraint("story_id", "user_id", name="uq_story_saves_story_user"),
+    )
 
     save_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     story_id: Mapped[int] = mapped_column(ForeignKey("stories.story_id", ondelete="CASCADE"), nullable=False)

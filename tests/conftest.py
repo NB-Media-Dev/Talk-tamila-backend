@@ -75,6 +75,12 @@ def creator_auth_headers():
 
 
 @pytest.fixture
+def influencer_auth_headers():
+    token = create_access_token(3)  # Influencer user seeded with id 3
+    return {"Authorization": f"Bearer {token}"}
+
+
+@pytest.fixture
 def freelancer_auth_headers():
     token = create_access_token(4)  # Freelancer user seeded with id 4
     return {"Authorization": f"Bearer {token}"}

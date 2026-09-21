@@ -1,5 +1,7 @@
 from typing import List, Optional
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+from app.common.enums import StoryAudienceEnum, StoryAudience
 
 
 class StorySlideResponse(BaseModel):
@@ -9,6 +11,7 @@ class StorySlideResponse(BaseModel):
     media_url: Optional[str] = None
     media_type: str = "image"
     caption: Optional[str] = None
+    content: Optional[str] = None
     duration: int = 5000
     created_at: Optional[str] = None
     expires_at: Optional[str] = None
@@ -40,13 +43,15 @@ class StoryItemResponse(BaseModel):
     story_id: int
     id: int
     user_id: int
+    author_id: Optional[int] = None
     media_url: str
     imageUrl: Optional[str] = None
     media_type: str = "image"
     created_at: str
     expires_at: str
     caption: Optional[str] = None
-    audience: str = "public"
+    content: Optional[str] = None
+    audience: str = "PUBLIC"
     is_active: bool = True
     has_active_story: bool = True
     music_id: Optional[int] = None
@@ -64,6 +69,7 @@ class StoryItemResponse(BaseModel):
     liked_by_me: bool = False
     user: Optional[StoryUserResponse] = None
     model_config = ConfigDict(from_attributes=True)
+
 
 
 class StoryGroupResponse(BaseModel):
@@ -165,11 +171,12 @@ class StoryMuteResponse(BaseModel):
     is_muted: bool
 
 
-class StoryJsonCreateRequest(BaseModel):
-    media_url: Optional[str] = "text-story"
-    media_type: Optional[str] = "image"
-    caption: Optional[str] = None
-    audience: Optional[str] = "public"
+class StoryCreateRequest(BaseModel):
+    content: Optional[str] = Field(default=None, max_length=2200, description="Story content / text overlay")
+    caption: Optional[str] = Field(default=None, max_length=2200, description="Story caption (alias for content)")
+    audience: StoryAudienceEnum = Field(default=StoryAudienceEnum.PUBLIC, description="Audience: PUBLIC, FOLLOWERS, CLOSE_FRIENDS")
+    media_url: Optional[str] = Field(default=None, description="Media URL or gradient placeholder")
+    media_type: Optional[str] = Field(default="image", description="Media type: image, video, text")
     duration_hours: Optional[int] = Field(default=24, ge=1, le=72)
     music_id: Optional[int] = None
     music_title: Optional[str] = None
@@ -178,13 +185,27 @@ class StoryJsonCreateRequest(BaseModel):
     music_thumbnail: Optional[str] = None
     music_duration: Optional[float] = 60.0
     music_start_time: Optional[float] = 0.0
+
+    @model_validator(mode="after")
+    def sync_content_caption(self):
+        if self.content is not None and self.caption is None:
+            self.caption = self.content
+        elif self.caption is not None and self.content is None:
+            self.content = self.caption
+        return self
+
+
+class StoryJsonCreateRequest(StoryCreateRequest):
+    """Backwards-compatible alias for StoryCreateRequest."""
+    pass
 
 
 class StoryTextCreateRequest(BaseModel):
     caption: str = Field(..., min_length=1, max_length=2200)
+    content: Optional[str] = Field(default=None, max_length=2200)
     theme: Optional[str] = "insta"
     media_url: Optional[str] = None
-    audience: Optional[str] = "public"
+    audience: StoryAudienceEnum = Field(default=StoryAudienceEnum.PUBLIC, description="Audience: PUBLIC, FOLLOWERS, CLOSE_FRIENDS")
     duration_hours: Optional[int] = Field(default=24, ge=1, le=72)
     music_id: Optional[int] = None
     music_title: Optional[str] = None
@@ -193,12 +214,22 @@ class StoryTextCreateRequest(BaseModel):
     music_thumbnail: Optional[str] = None
     music_duration: Optional[float] = 60.0
     music_start_time: Optional[float] = 0.0
+
+    @model_validator(mode="after")
+    def sync_content_caption(self):
+        if self.caption and not self.content:
+            self.content = self.caption
+        elif self.content and not self.caption:
+            self.caption = self.content
+        return self
 
 
 class StoryPatchRequest(BaseModel):
     """Edit caption and/or audience of an existing story (owner only)."""
     caption: Optional[str] = Field(default=None, max_length=2200)
-    audience: Optional[str] = Field(default=None, pattern="^(public|followers|close_friends)$")
+    content: Optional[str] = Field(default=None, max_length=2200)
+    audience: Optional[StoryAudienceEnum] = None
+
 
 
 class StoryReactRequest(BaseModel):

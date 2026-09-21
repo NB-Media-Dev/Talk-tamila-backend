@@ -194,3 +194,105 @@ def test_self_and_others_stories_flow(
     assert db_story.deleted_at is not None
     assert db_story.caption == story_payload["caption"]
 
+
+def test_unique_story_view_tracking_per_user(
+    client: TestClient,
+    creator_auth_headers: dict,
+    admin_auth_headers: dict,
+    influencer_auth_headers: dict,
+    db_session,
+):
+    """Verify story view is counted only once per user for each story:
+    - User A views Story X (1st time) -> views_count = 1, 1 DB row
+    - User A views Story X (2nd & 3rd time) -> views_count = 1, still 1 DB row
+    - User B views Story X (1st time) -> views_count = 2, 2 DB rows
+    - User B views Story X (2nd time) -> views_count = 2, still 2 DB rows
+    - User A views Story Y (1st time) -> Story Y views_count = 1
+    """
+    from app.common.models.story import StoryView
+
+    # Create Story X
+    story_x_payload = {
+        "media_url": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
+        "media_type": "image",
+        "caption": "Story X",
+        "duration_hours": 24,
+    }
+    resp_x = client.post("/api/stories", json=story_x_payload, headers=creator_auth_headers)
+    assert resp_x.status_code == 201
+    story_x_id = resp_x.json()["id"]
+
+    # Create Story Y
+    story_y_payload = {
+        "media_url": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
+        "media_type": "image",
+        "caption": "Story Y",
+        "duration_hours": 24,
+    }
+    resp_y = client.post("/api/stories", json=story_y_payload, headers=creator_auth_headers)
+    assert resp_y.status_code == 201
+    story_y_id = resp_y.json()["id"]
+
+    # 1. User A (admin) views Story X for the FIRST time -> view count +1
+    view_1 = client.post(f"/api/stories/{story_x_id}/view", headers=admin_auth_headers)
+    assert view_1.status_code == 200
+    assert view_1.json()["views_count"] == 1
+
+    # Check DB rows for Story X
+    db_views_x = db_session.query(StoryView).filter(StoryView.story_id == story_x_id).all()
+    assert len(db_views_x) == 1
+
+    # 2. User A (admin) views Story X a SECOND time -> view count stays 1, no duplicate DB row
+    view_2 = client.post(f"/api/stories/{story_x_id}/view", headers=admin_auth_headers)
+    assert view_2.status_code == 200
+    assert view_2.json()["views_count"] == 1
+
+    # 3. User A (admin) views Story X a THIRD time -> view count stays 1, no duplicate DB row
+    view_3 = client.post(f"/api/stories/{story_x_id}/view", headers=admin_auth_headers)
+    assert view_3.status_code == 200
+    assert view_3.json()["views_count"] == 1
+
+    db_views_x = db_session.query(StoryView).filter(StoryView.story_id == story_x_id).all()
+    assert len(db_views_x) == 1
+
+    # 4. User B (influencer) views Story X for the FIRST time -> view count +1 -> total 2
+    view_b1 = client.post(f"/api/stories/{story_x_id}/view", headers=influencer_auth_headers)
+    assert view_b1.status_code == 200
+    assert view_b1.json()["views_count"] == 2
+
+    db_views_x = db_session.query(StoryView).filter(StoryView.story_id == story_x_id).all()
+    assert len(db_views_x) == 2
+
+    # 5. User B (influencer) views Story X a SECOND time -> view count stays 2
+    view_b2 = client.post(f"/api/stories/{story_x_id}/view", headers=influencer_auth_headers)
+    assert view_b2.status_code == 200
+    assert view_b2.json()["views_count"] == 2
+
+    db_views_x = db_session.query(StoryView).filter(StoryView.story_id == story_x_id).all()
+    assert len(db_views_x) == 2
+
+    # 6. User A (admin) views Story Y for the FIRST time -> Story Y view count = 1
+    view_y1 = client.post(f"/api/stories/{story_y_id}/view", headers=admin_auth_headers)
+    assert view_y1.status_code == 200
+    assert view_y1.json()["views_count"] == 1
+
+    db_views_y = db_session.query(StoryView).filter(StoryView.story_id == story_y_id).all()
+    assert len(db_views_y) == 1
+
+    # 7. Concurrent simulation: direct DB attempt to insert duplicate StoryView must fail via UniqueConstraint
+    import pytest
+    from datetime import datetime, timezone
+    from sqlalchemy.exc import IntegrityError
+
+    with pytest.raises(IntegrityError):
+        duplicate_view = StoryView(
+            story_id=story_x_id,
+            user_id=1,  # Admin already viewed Story X
+            user_name="admin",
+            viewed_at=datetime.now(timezone.utc).replace(tzinfo=None),
+        )
+        db_session.add(duplicate_view)
+        db_session.commit()
+    db_session.rollback()
+
+

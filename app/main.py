@@ -101,6 +101,12 @@ async def lifespan(app: FastAPI):
                 "ALTER TABLE users ADD COLUMN reset_otp_expires DATETIME NULL",
                 "ALTER TABLE users ADD COLUMN reset_otp_verified BOOLEAN DEFAULT FALSE",
                 "ALTER TABLE users ADD COLUMN reset_otp_attempts INT NOT NULL DEFAULT 0",
+                "DELETE v1 FROM story_views v1 INNER JOIN story_views v2 WHERE v1.story_id = v2.story_id AND v1.user_id = v2.user_id AND v1.view_id > v2.view_id",
+                "ALTER TABLE story_views ADD UNIQUE INDEX uq_story_views_story_user (story_id, user_id)",
+                "DELETE l1 FROM story_likes l1 INNER JOIN story_likes l2 WHERE l1.story_id = l2.story_id AND l1.user_id = l2.user_id AND l1.story_likes_id > l2.story_likes_id",
+                "ALTER TABLE story_likes ADD UNIQUE INDEX uq_story_likes_story_user (story_id, user_id)",
+                "DELETE s1 FROM story_saves s1 INNER JOIN story_saves s2 WHERE s1.story_id = s2.story_id AND s1.user_id = s2.user_id AND s1.save_id > s2.save_id",
+                "ALTER TABLE story_saves ADD UNIQUE INDEX uq_story_saves_story_user (story_id, user_id)",
             ]:
                 try:
                     conn.execute(text(stmt))

@@ -8,7 +8,7 @@ from app.common.models.story import (
     StoryReport,
     StoryMute,
 )
-from app.common.models.social import Profile, Notification
+from app.common.models.social import Profile, Notification, Follow, CloseFriend
 from app.common.models.music import MusicTrack
 
 __all__ = [
@@ -22,5 +22,8 @@ __all__ = [
     "StoryMute",
     "Profile",
     "Notification",
+    "Follow",
+    "CloseFriend",
     "MusicTrack",
 ]
+

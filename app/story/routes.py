@@ -98,6 +98,7 @@ from app.common.schemas.story import (
     StoryBatchResponse,
     StoryGroupResponse,
     StoryItemResponse,
+    StoryCreateRequest,
     StoryJsonCreateRequest,
     StoryTextCreateRequest,
     StoryMuteResponse,
@@ -135,10 +136,26 @@ from datetime import timedelta
 router = APIRouter(prefix="/stories", tags=["Stories"])
 
 
+@router.get("/feed", response_model=List[StoryItemResponse])
+def get_stories_feed(
+    limit: int = Query(default=20, ge=1, le=100, description="Number of stories to return"),
+    offset: int = Query(default=0, ge=0, description="Offset for pagination"),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> List[StoryItemResponse]:
+    """Privacy-aware stories feed for authenticated user.
+    Returns only stories visible to the authenticated user based on privacy rules:
+    - PUBLIC stories
+    - User's own stories
+    - FOLLOWERS stories where the user follows the story author
+    - CLOSE_FRIENDS stories where the author designated the user as a close friend
+    """
+    return StoryService.get_privacy_feed(current_user, db, limit=limit, offset=offset)
+
 
 @router.get("", response_model=List[StoryGroupResponse])
-@router.get("/feed", response_model=List[StoryGroupResponse])
 @router.get("/active", response_model=List[StoryGroupResponse])
+@router.get("/grouped", response_model=List[StoryGroupResponse])
 def list_active_stories(
     role: Optional[str] = Query(None, description="Filter by role: influencer | freelancer | admin"),
     current_user: Optional[User] = Depends(get_optional_current_user),
@@ -147,9 +164,10 @@ def list_active_stories(
     """Active 24-hour stories grouped by creator.
     - Viewer's own story ('Your Story') is pinned first with is_my_story=True.
     - Unseen stories appear before fully-viewed ones.
-    - Role filter is optional.
+    - Respects privacy visibility permissions (PUBLIC, FOLLOWERS, CLOSE_FRIENDS).
     """
     return StoryService.list_active_groups(current_user, db, role_filter=role)
+
 
 
 
@@ -302,50 +320,17 @@ async def upload_multiple_stories(
 
 
 @router.post("", response_model=StoryItemResponse, status_code=status.HTTP_201_CREATED)
-def create_story_json(
-    payload: StoryJsonCreateRequest,
+def create_story(
+    payload: StoryCreateRequest,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> StoryItemResponse:
-    """Create a story from an external media URL, text story, or preset gradient."""
-    now_naive = make_naive(utc_now())
-    expires_naive = now_naive + timedelta(hours=payload.duration_hours or DEFAULT_DURATION_HOURS)
+    """Create a story with privacy permissions (PUBLIC, FOLLOWERS, CLOSE_FRIENDS).
+    - Authenticated user ID is strictly used as author_id.
+    - Audience accepts: PUBLIC, FOLLOWERS, CLOSE_FRIENDS.
+    """
+    return StoryService.create_story(payload, current_user, db)
 
-    resolved_music_id = MusicService.resolve_or_create_music_track(
-        db=db,
-        music_id=payload.music_id,
-        music_title=payload.music_title,
-        music_artist=payload.music_artist,
-        music_url=payload.music_url,
-        music_thumbnail=payload.music_thumbnail,
-        music_duration=payload.music_duration or 60.0,
-    )
-
-    media_type = (payload.media_type or "image").strip().lower()
-    media_url = payload.media_url
-    if not media_url:
-        media_url = "gradient:insta" if media_type == "text" else "text-story"
-
-    story = Story(
-        user_id=current_user.id,
-        media_url=media_url,
-        media_type=media_type,
-        caption=payload.caption,
-        audience=payload.audience or "public",
-        created_at=now_naive,
-        expires_at=expires_naive,
-        music_id=resolved_music_id,
-        music_title=payload.music_title,
-        music_artist=payload.music_artist,
-        music_url=payload.music_url,
-        music_thumbnail=payload.music_thumbnail,
-        music_duration=payload.music_duration or 60.0,
-        music_start_time=max(0.0, float(payload.music_start_time or 0.0)),
-    )
-    db.add(story)
-    db.commit()
-    db.refresh(story)
-    return build_story_item(story, current_user.id, db)
 
 
 @router.post("/text", response_model=StoryItemResponse, status_code=status.HTTP_201_CREATED)
@@ -636,3 +621,55 @@ def unmute_creator(
 ) -> dict:
     """Unmute a previously muted creator — their stories will reappear in your feed."""
     return StoryService.unmute_creator(user_id, current_user, db)
+
+
+# ── Close Friends & Follow Management ─────────────────────────────────────────
+
+@router.post("/close-friends/{friend_id:int}")
+def add_close_friend(
+    friend_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    """Add a user to your close friends list for CLOSE_FRIENDS stories visibility."""
+    return StoryService.add_close_friend(current_user.id, friend_id, db)
+
+
+@router.delete("/close-friends/{friend_id:int}")
+def remove_close_friend(
+    friend_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    """Remove a user from your close friends list."""
+    return StoryService.remove_close_friend(current_user.id, friend_id, db)
+
+
+@router.get("/close-friends", response_model=List[int])
+def get_close_friends(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> List[int]:
+    """Get list of user IDs in your close friends list."""
+    return StoryService.get_close_friends(current_user.id, db)
+
+
+@router.post("/follow/{user_id:int}")
+def follow_user(
+    user_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    """Follow a user to gain access to their FOLLOWERS stories."""
+    return StoryService.follow_user(current_user.id, user_id, db)
+
+
+@router.delete("/follow/{user_id:int}")
+def unfollow_user(
+    user_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    """Unfollow a user."""
+    return StoryService.unfollow_user(current_user.id, user_id, db)
+
