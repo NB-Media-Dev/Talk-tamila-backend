@@ -6,6 +6,7 @@ def test_self_and_others_stories_flow(
     client: TestClient,
     creator_auth_headers: dict,
     admin_auth_headers: dict,
+    db_session,
 ):
     """Thorough validation of Instagram Stories concept:
     - Creator uploads their own story
@@ -177,9 +178,19 @@ def test_self_and_others_stories_flow(
 
     # 12. Creator (author) deletes story -> 204 No Content
     del_resp = client.delete(f"/api/stories/{story_id}", headers=creator_auth_headers)
-    assert del_resp.status_code == 204
-
-    # 13. Verify story is deleted
+    # 13. Verify story is hidden from normal API retrieval (UI only removal)
     get_del_resp = client.get(f"/api/stories/{story_id}")
     assert get_del_resp.status_code == 404
+
+    # 14. Verify story is excluded from active feed and /my endpoint
+    my_after_del = client.get("/api/stories/my", headers=creator_auth_headers).json()
+    assert not any(s["id"] == story_id for s in my_after_del)
+
+    # 15. Verify story STILL EXISTS in database (Soft-deleted, not hard-deleted)
+    from app.common.models.story import Story
+    db_story = db_session.get(Story, story_id)
+    assert db_story is not None
+    assert db_story.is_deleted is True
+    assert db_story.deleted_at is not None
+    assert db_story.caption == story_payload["caption"]
 

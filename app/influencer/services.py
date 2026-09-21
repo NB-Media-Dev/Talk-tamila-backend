@@ -7,7 +7,7 @@ from app.common.models.story import Story, StoryView, StoryLike
 class InfluencerService:
     @staticmethod
     def get_dashboard_stats(user: User, db: Session) -> dict:
-        my_story_ids = [s.story_id for s in db.query(Story.story_id).filter(Story.user_id == user.id).all()]
+        my_story_ids = [s.story_id for s in db.query(Story.story_id).filter(Story.user_id == user.id, Story.is_deleted == False).all()]
         total_views = 0
         total_likes = 0
         if my_story_ids:

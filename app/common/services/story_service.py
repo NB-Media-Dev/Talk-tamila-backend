@@ -195,7 +195,7 @@ def build_story_item(
         )
 
     now_naive = make_naive(utc_now())
-    is_active = (story.expires_at is None) or (story.expires_at > now_naive)
+    is_active = (not story.is_deleted) and ((story.expires_at is None) or (story.expires_at > now_naive))
 
     return StoryItemResponse(
         story_id=story.story_id,
@@ -273,6 +273,7 @@ class StoryService:
             db.query(Story)
             .options(joinedload(Story.owner))
             .filter(
+                Story.is_deleted == False,
                 or_(Story.expires_at.is_(None), Story.expires_at > now_naive),
                 Story.created_at >= cutoff,
             )
@@ -383,6 +384,7 @@ class StoryService:
             .options(joinedload(Story.owner))
             .filter(
                 Story.user_id == current_user.id,
+                Story.is_deleted == False,
                 or_(Story.expires_at.is_(None), Story.expires_at > now_naive),
                 Story.created_at >= cutoff,
             )
@@ -404,6 +406,7 @@ class StoryService:
             .options(joinedload(Story.owner))
             .filter(
                 Story.user_id == target_user_id,
+                Story.is_deleted == False,
                 or_(Story.expires_at.is_(None), Story.expires_at > now_naive),
                 Story.created_at >= cutoff,
             )
@@ -417,7 +420,7 @@ class StoryService:
     @staticmethod
     def get_story_by_id(story_id: int, current_user_id: Optional[int], db: Session) -> StoryItemResponse:
         story = db.get(Story, story_id)
-        if not story:
+        if not story or story.is_deleted:
             raise HTTPException(status_code=404, detail="Story not found")
         return build_story_item(story, current_user_id, db)
 
@@ -568,7 +571,7 @@ class StoryService:
     @staticmethod
     def record_view(story_id: int, current_user: User, db: Session) -> dict:
         story = db.get(Story, story_id)
-        if not story:
+        if not story or story.is_deleted:
             raise HTTPException(status_code=404, detail="Story not found")
 
         existing = (
@@ -596,8 +599,14 @@ class StoryService:
     @staticmethod
     def like_story(story_id: int, current_user: User, db: Session) -> dict:
         story = db.get(Story, story_id)
-        if not story:
+        if not story or story.is_deleted:
             raise HTTPException(status_code=404, detail="Story not found")
+
+        if story.user_id == current_user.id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Cannot like your own story.",
+            )
 
         existing = (
             db.query(StoryLike)
@@ -639,7 +648,7 @@ class StoryService:
     @staticmethod
     def unlike_story(story_id: int, current_user: User, db: Session) -> dict:
         story = db.get(Story, story_id)
-        if not story:
+        if not story or story.is_deleted:
             raise HTTPException(status_code=404, detail="Story not found")
 
         existing = (
@@ -668,7 +677,7 @@ class StoryService:
         db: Session,
     ) -> dict:
         story = db.get(Story, story_id)
-        if not story:
+        if not story or story.is_deleted:
             raise HTTPException(status_code=404, detail="Story not found")
         logger.info(
             "User %s %s story %s (slide: %s, progress: %sms)",
@@ -690,8 +699,14 @@ class StoryService:
     @staticmethod
     def comment_story(story_id: int, text: str, current_user: User, db: Session) -> dict:
         story = db.get(Story, story_id)
-        if not story:
+        if not story or story.is_deleted:
             raise HTTPException(status_code=404, detail="Story not found")
+
+        if story.user_id == current_user.id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Cannot reply to your own story.",
+            )
 
         reply = StoryReply(
             story_id=story_id,
@@ -729,6 +744,10 @@ class StoryService:
 
     @staticmethod
     def get_comments(story_id: int, db: Session) -> List[StoryReplyResponse]:
+        story = db.get(Story, story_id)
+        if not story or story.is_deleted:
+            raise HTTPException(status_code=404, detail="Story not found")
+
         replies = (
             db.query(StoryReply)
             .options(joinedload(StoryReply.user))
@@ -758,7 +777,7 @@ class StoryService:
         target_user_id: Optional[int] = None,
     ) -> StoryShareResponse:
         story = db.get(Story, story_id)
-        if not story:
+        if not story or story.is_deleted:
             raise HTTPException(status_code=404, detail="Story not found")
 
         share = StoryShare(
@@ -798,7 +817,7 @@ class StoryService:
     @staticmethod
     def report_story(story_id: int, reason: str, current_user: User, db: Session, details: Optional[str] = None) -> dict:
         story = db.get(Story, story_id)
-        if not story:
+        if not story or story.is_deleted:
             raise HTTPException(status_code=404, detail="Story not found")
 
         combined_reason = f"{reason} - {details}" if details else reason
@@ -860,7 +879,7 @@ class StoryService:
     @staticmethod
     def save_story(story_id: int, current_user: User, db: Session) -> dict:
         story = db.get(Story, story_id)
-        if not story:
+        if not story or story.is_deleted:
             raise HTTPException(status_code=404, detail="Story not found")
 
         existing = db.query(StorySave).filter(
@@ -920,13 +939,13 @@ class StoryService:
                 "caption": s.story.caption if s.story else None,
             }
             for s in saves
-            if s.story is not None
+            if s.story is not None and not s.story.is_deleted
         ]
 
     @staticmethod
     def delete_story(story_id: int, current_user: User, db: Session) -> dict:
         story = db.get(Story, story_id)
-        if not story:
+        if not story or story.is_deleted:
             raise HTTPException(status_code=404, detail="Story not found")
 
         if current_user.id != story.user_id:
@@ -935,25 +954,18 @@ class StoryService:
                 detail="Only the author who created this story can delete it.",
             )
 
-        try:
-            db.query(StorySave).filter(StorySave.story_id == story_id).delete(synchronize_session=False)
-            db.query(StoryReport).filter(StoryReport.story_id == story_id).delete(synchronize_session=False)
-            db.query(StoryShare).filter(StoryShare.story_id == story_id).delete(synchronize_session=False)
-            db.query(StoryReply).filter(StoryReply.story_id == story_id).delete(synchronize_session=False)
-            db.query(StoryLike).filter(StoryLike.story_id == story_id).delete(synchronize_session=False)
-            db.query(StoryView).filter(StoryView.story_id == story_id).delete(synchronize_session=False)
-        except Exception as e:
-            logger.warning("Cascading cleanup note for story %s: %s", story_id, e)
-
-        db.delete(story)
+        # Soft delete: update is_deleted and deleted_at flag so it is removed from UI,
+        # but keep the story record and related views/likes/replies stored in the database.
+        story.is_deleted = True
+        story.deleted_at = make_naive(utc_now())
         db.commit()
-        logger.info("Story %s deleted by user %s", story_id, current_user.id)
+        logger.info("Story %s soft-deleted (hidden from UI) by user %s", story_id, current_user.id)
         return {"success": True, "message": "Story deleted successfully", "story_id": story_id}
 
     @staticmethod
     def get_activity(story_id: int, current_user: User, db: Session) -> StoryActivityResponse:
         story = db.get(Story, story_id)
-        if not story:
+        if not story or story.is_deleted:
             raise HTTPException(status_code=404, detail="Story not found")
 
         if story.user_id != current_user.id and not current_user.is_admin:
@@ -1043,7 +1055,7 @@ class StoryService:
         from app.common.schemas.story import PaginatedViewerResponse, StoryViewerItem
 
         story = db.get(Story, story_id)
-        if not story:
+        if not story or story.is_deleted:
             raise HTTPException(status_code=404, detail="Story not found")
         if story.user_id != current_user.id and not current_user.is_admin:
             raise HTTPException(status_code=403, detail="Only the story owner can see viewers.")
@@ -1089,7 +1101,7 @@ class StoryService:
         from app.common.schemas.story import PaginatedLikerResponse, StoryLikerItem
 
         story = db.get(Story, story_id)
-        if not story:
+        if not story or story.is_deleted:
             raise HTTPException(status_code=404, detail="Story not found")
         if story.user_id != current_user.id and not current_user.is_admin:
             raise HTTPException(status_code=403, detail="Only the story owner can see likers.")
@@ -1125,12 +1137,19 @@ class StoryService:
 
     @staticmethod
     def get_my_stats(current_user: User, db: Session):
-        """Aggregate engagement totals across all stories created by the current user."""
+        """Aggregate engagement totals across all non-deleted stories created by the current user."""
         from app.common.schemas.story import StoryStatsResponse
 
         now_naive = make_naive(utc_now())
 
-        story_ids_rows = db.query(Story.story_id).filter(Story.user_id == current_user.id).all()
+        story_ids_rows = (
+            db.query(Story.story_id)
+            .filter(
+                Story.user_id == current_user.id,
+                Story.is_deleted == False,
+            )
+            .all()
+        )
         story_ids = [r[0] for r in story_ids_rows]
         total_stories = len(story_ids)
 
@@ -1153,6 +1172,7 @@ class StoryService:
 
         active_stories = db.query(func.count(Story.story_id)).filter(
             Story.user_id == current_user.id,
+            Story.is_deleted == False,
             or_(Story.expires_at.is_(None), Story.expires_at > now_naive),
         ).scalar() or 0
         expired_stories = total_stories - active_stories
@@ -1172,7 +1192,7 @@ class StoryService:
     def update_story(story_id: int, caption: Optional[str], audience: Optional[str], current_user: User, db: Session) -> Story:
         """Edit caption and/or audience of an existing story (owner only)."""
         story = db.get(Story, story_id)
-        if not story:
+        if not story or story.is_deleted:
             raise HTTPException(status_code=404, detail="Story not found")
         if story.user_id != current_user.id:
             raise HTTPException(status_code=403, detail="Only the story owner can edit it.")
@@ -1188,7 +1208,7 @@ class StoryService:
 
     @staticmethod
     def get_archived_stories(current_user: User, db: Session):
-        """Return expired (past 30-day) stories for the authenticated user."""
+        """Return expired (past 30-day) non-deleted stories for the authenticated user."""
         from app.common.schemas.story import StoryArchivedItem
 
         now_naive = make_naive(utc_now())
@@ -1198,6 +1218,7 @@ class StoryService:
             db.query(Story)
             .filter(
                 Story.user_id == current_user.id,
+                Story.is_deleted == False,
                 Story.expires_at.isnot(None),
                 Story.expires_at <= now_naive,
                 Story.created_at >= cutoff_30d,
@@ -1233,7 +1254,7 @@ class StoryService:
         from app.common.schemas.story import StoryReactResponse
 
         story = db.get(Story, story_id)
-        if not story:
+        if not story or story.is_deleted:
             raise HTTPException(status_code=404, detail="Story not found")
 
         tag = f"react:{emoji}"
@@ -1288,6 +1309,7 @@ class StoryService:
             db.query(Story)
             .filter(
                 Story.user_id == current_user.id,
+                Story.is_deleted == False,
                 Story.created_at >= cutoff_7d,
             )
             .order_by(desc(Story.created_at))
@@ -1339,6 +1361,7 @@ class StoryService:
             )
             .filter(
                 Story.user_id == current_user.user_id,
+                Story.is_deleted == False,
                 or_(Story.expires_at.is_(None), Story.expires_at > now_naive),
             )
             .order_by(desc(Story.created_at))

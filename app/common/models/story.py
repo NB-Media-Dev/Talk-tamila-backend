@@ -45,6 +45,9 @@ class Story(Base):
     music_start_time: Mapped[float | None] = mapped_column(Float, default=0.0, nullable=True)
     music_duration: Mapped[float | None] = mapped_column(Float, default=60.0, nullable=True)
 
+    is_deleted: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
     owner: Mapped["User"] = relationship("User", back_populates="stories")
     views: Mapped[list["StoryView"]] = relationship("StoryView", back_populates="story", cascade="all, delete-orphan")
     likes: Mapped[list["StoryLike"]] = relationship("StoryLike", back_populates="story", cascade="all, delete-orphan")
@@ -58,7 +61,7 @@ class Story(Base):
 
     @property
     def has_active_story(self) -> bool:
-        return True
+        return not self.is_deleted
 
 
 class StoryView(Base):

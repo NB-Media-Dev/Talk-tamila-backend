@@ -13,8 +13,11 @@ from sqlalchemy.pool import StaticPool
 from app.core.database import Base
 from app.core.dependencies import get_db
 from app.core.security import create_access_token
+from app.core.config import settings
 from app.main import app
 from app.utils.seed import seed_db_data
+
+settings.ENVIRONMENT = "production"
 
 TEST_DATABASE_URL = "sqlite:///:memory:"
 

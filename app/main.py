@@ -90,6 +90,8 @@ async def lifespan(app: FastAPI):
                 "ALTER TABLE stories MODIFY COLUMN caption LONGTEXT NULL",
                 "ALTER TABLE stories MODIFY COLUMN music_url LONGTEXT NULL",
                 "ALTER TABLE stories MODIFY COLUMN music_thumbnail LONGTEXT NULL",
+                "ALTER TABLE stories ADD COLUMN is_deleted BOOLEAN DEFAULT FALSE NOT NULL",
+                "ALTER TABLE stories ADD COLUMN deleted_at DATETIME NULL",
                 "ALTER TABLE music_tracks ADD COLUMN language VARCHAR(50) DEFAULT 'Tamil'",
                 "ALTER TABLE music_tracks ADD COLUMN genre VARCHAR(50) DEFAULT 'Tamil'",
                 "ALTER TABLE music_tracks ADD COLUMN is_trending BOOLEAN DEFAULT TRUE",
