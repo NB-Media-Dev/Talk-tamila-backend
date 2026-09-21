@@ -212,7 +212,8 @@ def check_availability(
 
     return result
 
-@auth_router.post("/register", status_code=status.HTTP_201_CREATED)
+
+@auth_router.post("/signup", status_code=status.HTTP_201_CREATED)
 def signup(payload: RegisterRequest, db: Session = Depends(get_db)) -> dict:
     user = AuthService.register(db, payload)
     access_token = create_access_token(user.id)
@@ -285,7 +286,6 @@ def get_profile(current_user: User = Depends(get_current_user)) -> dict:
     }
 
 @auth_router.post("/login", openapi_extra=login_schema_extra ,status_code=status.HTTP_200_OK)
-@auth_router.post("/signin", openapi_extra=login_schema_extra ,status_code=status.HTTP_200_OK)
 async def login(request: Request, db: Session = Depends(get_db)) -> dict:
     content_type = request.headers.get("content-type", "")
     username_val = None
