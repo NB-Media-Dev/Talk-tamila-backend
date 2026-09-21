@@ -10,6 +10,7 @@ except ImportError:
     except ImportError:
         raise ImportError("Neither 'PyJWT' nor 'python-jose' is installed.")
 
+
 from app.core.config import settings
 
 

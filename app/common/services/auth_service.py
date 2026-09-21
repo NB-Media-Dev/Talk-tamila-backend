@@ -22,6 +22,10 @@ class AuthService:
         return db.query(User).filter(User.email == email).first()
 
     @staticmethod
+    def get_by_mobile(db: Session, mobile_no: str) -> Optional[User]:
+        return db.query(User).filter(User.mobile_no == mobile_no).first()
+
+    @staticmethod
     def authenticate(db: Session, username: str, password: str) -> Optional[User]:
         user = AuthService.get_by_username(db, username)
         if not user:
@@ -122,10 +126,15 @@ class AuthService:
         mob = data.mobile_no
         if not mob:
             mob = f"987{random.randint(1000000, 9999999)}"
-        else:
-            existing_user = db.query(User).filter(User.mobile_no == mob).first()
-            if existing_user and existing_user.email != data.email:
+            while AuthService.get_by_mobile(db, mob):
                 mob = f"987{random.randint(1000000, 9999999)}"
+        else:
+            existing_user = AuthService.get_by_mobile(db, mob)
+            if existing_user:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="This mobile number is already registered. Please use a different mobile number.",
+                )
 
         role_val = data.role if data.role in ("influencer", "freelancer", "admin") else "influencer"
 

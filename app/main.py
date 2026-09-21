@@ -175,24 +175,22 @@ def signup(payload: RegisterRequest, db: Session = Depends(get_db)) -> dict:
     user = AuthService.register(db, payload)
     access_token = create_access_token(user.id)
     refresh_token = create_refresh_token(user.id)
-    return {
-        "access_token": access_token,
-        "refresh_token": refresh_token,
-        "token_type": "bearer",
-        "user": {
-            "id": user.user_id,
-            "user_id": user.user_id,
-            "username": user.username,
-            "email": user.email,
-            "full_name": user.full_name,
-            "role": user.role,
-        },
+    user_dict = {
         "id": user.user_id,
         "user_id": user.user_id,
         "username": user.username,
         "email": user.email,
         "full_name": user.full_name,
+        "mobile_no": user.mobile_no,
+        "dob": user.dob.isoformat() if user.dob else None,
         "role": user.role,
+    }
+    return {
+        "access_token": access_token,
+        "refresh_token": refresh_token,
+        "token_type": "bearer",
+        "user": user_dict,
+        **user_dict,
     }
 
 
@@ -238,6 +236,8 @@ def get_profile(current_user: User = Depends(get_current_user)) -> dict:
             "username": current_user.username,
             "email": current_user.email,
             "full_name": current_user.full_name,
+            "mobile_no": current_user.mobile_no,
+            "dob": current_user.dob.isoformat() if current_user.dob else None,
             "role": current_user.role,
         }
     }
@@ -295,6 +295,8 @@ async def login(request: Request, db: Session = Depends(get_db)) -> dict:
         "first_name": user.first_name,
         "last_name": user.last_name,
         "full_name": user.full_name,
+        "mobile_no": user.mobile_no,
+        "dob": user.dob.isoformat() if user.dob else None,
         "role": user.role,
         "avatar_url": user.avatar_url,
         "followers_count": user.followers_count,
@@ -310,6 +312,8 @@ async def login(request: Request, db: Session = Depends(get_db)) -> dict:
         "username": user.username,
         "email": user.email,
         "full_name": user.full_name,
+        "mobile_no": user.mobile_no,
+        "dob": user.dob.isoformat() if user.dob else None,
         "role": user.role,
     }
 
@@ -347,6 +351,8 @@ def get_me(current_user: User = Depends(get_current_user)) -> dict:
         "first_name": current_user.first_name,
         "last_name": current_user.last_name,
         "full_name": current_user.full_name,
+        "mobile_no": current_user.mobile_no,
+        "dob": current_user.dob.isoformat() if current_user.dob else None,
         "role": current_user.role,
         "avatar_url": current_user.avatar_url,
         "bio": current_user.bio,
