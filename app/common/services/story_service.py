@@ -35,6 +35,8 @@ from app.common.schemas.story import (
     StoryShareResponse,
     StorySlideResponse,
     StoryUserResponse,
+    SlideOwnerFeedResponse,
+    StoryOwnerFeedResponse,
 )
 
 logger = logging.getLogger("talktamila.story_service")
@@ -403,8 +405,11 @@ class StoryService:
         result_groups: List[StoryGroupResponse] = []
         for uid, data in groups_dict.items():
             stories_list: List[StoryItemResponse] = data["stories"]
+            # Chronological ascending sort so Slide 1 is at index 0
+            stories_list.sort(key=lambda s: s.created_at or "")
             creator_name = data["user"].userName
             slides_list = [story_to_slide(s, creator_name) for s in stories_list]
+
 
             all_viewed = all(s.viewed_by_me for s in stories_list) if caller_id else False
             has_unseen = any(not s.viewed_by_me for s in stories_list) if caller_id else True
@@ -814,9 +819,10 @@ class StoryService:
 
     @staticmethod
     def record_view(story_id: int, current_user: User, db: Session) -> dict:
+        """Record view for a specific slide / story item idempotently."""
         story = db.get(Story, story_id)
         if not story or story.is_deleted:
-            raise HTTPException(status_code=404, detail="Story not found")
+            raise HTTPException(status_code=404, detail=f"Slide/Story {story_id} not found")
 
         existing = (
             db.query(StoryView)
@@ -835,15 +841,75 @@ class StoryService:
                 db.commit()
             except IntegrityError:
                 db.rollback()
-            except Exception:
+            except Exception as e:
                 db.rollback()
+                logger.warning(f"Failed to record view for slide {story_id}: {e}")
 
         views_count = (
             db.query(func.count(func.distinct(StoryView.user_id)))
             .filter(StoryView.story_id == story_id)
             .scalar() or 0
         )
-        return {"success": True, "message": "Story viewed", "story_id": story_id, "views_count": views_count}
+        return {
+            "success": True,
+            "message": "Slide view recorded",
+            "slide_id": story_id,
+            "story_id": story_id,
+            "viewer_id": current_user.id,
+            "views_count": views_count,
+        }
+
+    @staticmethod
+    def get_owner_feed(current_user: User, db: Session) -> List[StoryOwnerFeedResponse]:
+        """Fetch active stories owned by the current user with granular per-slide view metrics."""
+        now_naive = make_naive(utc_now())
+        cutoff = now_naive - timedelta(hours=DEFAULT_DURATION_HOURS)
+
+        stories = (
+            db.query(Story)
+            .filter(
+                Story.user_id == current_user.id,
+                Story.is_deleted == False,
+                or_(Story.expires_at.is_(None), Story.expires_at > now_naive),
+                Story.created_at >= cutoff,
+            )
+            .order_by(desc(Story.created_at))
+            .all()
+        )
+
+        if not stories:
+            return []
+
+        story_ids = [s.story_id for s in stories]
+        views_rows = (
+            db.query(StoryView.story_id, func.count(func.distinct(StoryView.user_id)))
+            .filter(StoryView.story_id.in_(story_ids))
+            .group_by(StoryView.story_id)
+            .all()
+        )
+        views_map = {r[0]: r[1] for r in views_rows}
+
+        slides = [
+            SlideOwnerFeedResponse(
+                id=s.story_id,
+                content=s.caption,
+                imageUrl=s.media_url,
+                media_url=s.media_url,
+                views_count=views_map.get(s.story_id, 0),
+            )
+            for s in stories
+        ]
+
+        # Wrap in story container for the owner
+        return [
+            StoryOwnerFeedResponse(
+                story_id=stories[0].story_id if stories else 0,
+                userName="Your Story",
+                author_id=current_user.id,
+                slides=slides,
+            )
+        ]
+
 
     @staticmethod
     def like_story(story_id: int, current_user: User, db: Session) -> dict:
