@@ -21,6 +21,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
@@ -111,7 +112,7 @@ async def lifespan(app: FastAPI):
         finally:
             db.close()
     except Exception as e:
-        print(f"Database initialization note: {e}")
+        print(f"Database auto-seeding/migration note: {e}")
     yield
 
 
@@ -166,6 +167,46 @@ class RefreshRequest(BaseModel):
 class ChangePasswordPayload(BaseModel):
     old_password: str = Field(..., min_length=1)
     new_password: str = Field(..., min_length=6)
+
+
+@auth_router.get("/check-availability", status_code=status.HTTP_200_OK)
+def check_availability(
+    email: Optional[str] = Query(None),
+    mobile_no: Optional[str] = Query(None),
+    username: Optional[str] = Query(None),
+    db: Session = Depends(get_db),
+) -> dict:
+
+    result: dict = {}
+
+    if email is not None:
+        taken = AuthService.get_by_email(db, email.strip()) is not None
+        result["email"] = {
+            "available": not taken,
+            "message": "This email is already registered. Please use a different email."
+            if taken
+            else None,
+        }
+
+    if mobile_no is not None:
+        taken = AuthService.get_by_mobile(db, mobile_no.strip()) is not None
+        result["mobile_no"] = {
+            "available": not taken,
+            "message": "This mobile number is already registered. Please use a different mobile number."
+            if taken
+            else None,
+        }
+
+    if username is not None:
+        taken = AuthService.get_by_username(db, username.strip()) is not None
+        result["username"] = {
+            "available": not taken,
+            "message": "This username is already taken. Please choose a different username."
+            if taken
+            else None,
+        }
+
+    return result
 
 
 @auth_router.post("/signup", status_code=status.HTTP_201_CREATED)
