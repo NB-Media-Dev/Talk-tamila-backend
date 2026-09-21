@@ -1,10 +1,13 @@
 from datetime import date, datetime
-from typing import Optional
+from typing import Optional,TYPE_CHECKING
 from sqlalchemy import Boolean, Date, DateTime, Enum, Integer, String, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
 
+if TYPE_CHECKING:
+    from app.common.models.social import Profile
+    from app.common.models.story import Story
 
 class User(Base):
     __tablename__ = "users"
