@@ -169,11 +169,7 @@ def list_active_stories(
     """
     return StoryService.list_active_groups(current_user, db, role_filter=role)
 
-
-
-
-@router.get("/my", response_model=List[StoryItemResponse])
-@router.get("/me", response_model=List[StoryItemResponse])
+@router.get("/profile", response_model=List[StoryItemResponse])
 def get_my_active_stories(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),

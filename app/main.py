@@ -82,41 +82,6 @@ from app.utils.seed import seed_db_data
 async def lifespan(app: FastAPI):
     try:
         Base.metadata.create_all(bind=engine)
-
-        with engine.connect() as conn:
-            for stmt in [
-                "ALTER TABLE stories MODIFY COLUMN media_type VARCHAR(20) NOT NULL DEFAULT 'image'",
-                "ALTER TABLE stories MODIFY COLUMN media_url LONGTEXT NOT NULL",
-                "ALTER TABLE stories MODIFY COLUMN caption LONGTEXT NULL",
-                "ALTER TABLE stories MODIFY COLUMN music_url LONGTEXT NULL",
-                "ALTER TABLE stories MODIFY COLUMN music_thumbnail LONGTEXT NULL",
-                "ALTER TABLE stories ADD COLUMN is_deleted BOOLEAN DEFAULT FALSE NOT NULL",
-                "ALTER TABLE stories ADD COLUMN deleted_at DATETIME NULL",
-                "ALTER TABLE music_tracks ADD COLUMN language VARCHAR(50) DEFAULT 'Tamil'",
-                "ALTER TABLE music_tracks ADD COLUMN genre VARCHAR(50) DEFAULT 'Tamil'",
-                "ALTER TABLE music_tracks ADD COLUMN is_trending BOOLEAN DEFAULT TRUE",
-                "ALTER TABLE music_tracks ADD COLUMN cover_url VARCHAR(500) NULL",
-                "ALTER TABLE music_tracks ADD COLUMN duration_seconds FLOAT DEFAULT 60.0",
-                "ALTER TABLE users ADD COLUMN reset_otp VARCHAR(6) NULL",
-                "ALTER TABLE users ADD COLUMN reset_otp_expires DATETIME NULL",
-                "ALTER TABLE users ADD COLUMN reset_otp_verified BOOLEAN DEFAULT FALSE",
-                "ALTER TABLE users ADD COLUMN reset_otp_attempts INT NOT NULL DEFAULT 0",
-                "DELETE v1 FROM story_views v1 INNER JOIN story_views v2 WHERE v1.story_id = v2.story_id AND v1.user_id = v2.user_id AND v1.view_id > v2.view_id",
-                "ALTER TABLE story_views ADD UNIQUE INDEX uq_story_views_story_user (story_id, user_id)",
-                "ALTER TABLE story_views ADD COLUMN user_name VARCHAR(100) NULL",
-                "DELETE l1 FROM story_likes l1 INNER JOIN story_likes l2 WHERE l1.story_id = l2.story_id AND l1.user_id = l2.user_id AND l1.story_likes_id > l2.story_likes_id",
-                "ALTER TABLE story_likes ADD UNIQUE INDEX uq_story_likes_story_user (story_id, user_id)",
-                "ALTER TABLE story_likes ADD COLUMN user_name VARCHAR(100) NULL",
-                "DELETE s1 FROM story_saves s1 INNER JOIN story_saves s2 WHERE s1.story_id = s2.story_id AND s1.user_id = s2.user_id AND s1.save_id > s2.save_id",
-                "ALTER TABLE story_saves ADD UNIQUE INDEX uq_story_saves_story_user (story_id, user_id)",
-                "ALTER TABLE story_replies ADD COLUMN user_name VARCHAR(100) NULL",
-            ]:
-                try:
-                    conn.execute(text(stmt))
-                    conn.commit()
-                except Exception:
-                    pass
-
         db = SessionLocal()
         try:
             if settings.ENVIRONMENT.lower() != "production" and db.query(User).first() is None:
