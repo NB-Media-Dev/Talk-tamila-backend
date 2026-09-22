@@ -242,30 +242,15 @@ login_schema_extra = {
 
 @auth_router.post("/login", openapi_extra=login_schema_extra ,status_code=status.HTTP_200_OK)
 async def login(request: Request, db: Session = Depends(get_db)) -> dict:
-    content_type = request.headers.get("content-type", "")
-    username_val = None
-    password_val = None
+    # 1. Try to get data from JSON, otherwise try Form data
+    try:
+        body = await request.json()
+    except Exception:
+        body = await request.form()
 
-    if "application/json" in content_type:
-        try:
-            body = await request.json()
-            username_val = body.get("username") or body.get("email") or body.get("username_or_email")
-            password_val = body.get("password")
-        except Exception:
-            raise HTTPException(status_code=400, detail="Invalid JSON body.")
-    elif "application/x-www-form-urlencoded" in content_type or "multipart/form-data" in content_type:
-        form = await request.form()
-        username_val = form.get("username") or form.get("email") or form.get("username_or_email")
-        password_val = form.get("password")
-    else:
-        try:
-            body = await request.json()
-            username_val = body.get("username") or body.get("email") or body.get("username_or_email")
-            password_val = body.get("password")
-        except Exception:
-            form = await request.form()
-            username_val = form.get("username") or form.get("email") or form.get("username_or_email")
-            password_val = form.get("password")
+    # 2. Extract username/email and password
+    username_val = body.get("username") or body.get("email") or body.get("username_or_email")
+    password_val = body.get("password")
 
     if not username_val or not password_val:
         raise HTTPException(
@@ -273,6 +258,7 @@ async def login(request: Request, db: Session = Depends(get_db)) -> dict:
             detail="Username/email and password are required.",
         )
 
+    # 3. Authenticate the user
     user = AuthService.authenticate(db, str(username_val).strip(), str(password_val))
     if not user:
         raise HTTPException(
@@ -281,38 +267,8 @@ async def login(request: Request, db: Session = Depends(get_db)) -> dict:
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    access_token = create_access_token(user.id)
-    refresh_token = create_refresh_token(user.id)
-
-    user_dict = {
-        "id": user.id,
-        "user_id": user.user_id,
-        "username": user.username,
-        "email": user.email,
-        "first_name": user.first_name,
-        "last_name": user.last_name,
-        "full_name": user.full_name,
-        "mobile_no": user.mobile_no,
-        "dob": user.dob.isoformat() if user.dob else None,
-        "role": user.role,
-        "avatar_url": user.avatar_url,
-        "followers_count": user.followers_count,
-    }
-
-    return {
-        "access_token": access_token,
-        "refresh_token": refresh_token,
-        "token_type": "bearer",
-        "user": user_dict,
-        "id": user.id,
-        "user_id": user.user_id,
-        "username": user.username,
-        "email": user.email,
-        "full_name": user.full_name,
-        "mobile_no": user.mobile_no,
-        "dob": user.dob.isoformat() if user.dob else None,
-        "role": user.role,
-    }
+    # 4. Return the standardized response from the service
+    return AuthService.generate_token_response(user)
 
 
 @auth_router.post("/refresh")
@@ -341,7 +297,7 @@ def refresh_token(payload: RefreshRequest, db: Session = Depends(get_db)) -> dic
 @auth_router.get("/profile")
 def get_me(current_user: User = Depends(get_current_user)) -> dict:
     return {
-        "id": current_user.user_id,
+        "id": current_user.id,
         "user_id": current_user.user_id,
         "username": current_user.username,
         "email": current_user.email,

@@ -1,5 +1,5 @@
 from datetime import date, datetime
-from typing import Optional,TYPE_CHECKING
+from typing import Optional, TYPE_CHECKING
 from sqlalchemy import Boolean, Date, DateTime, Enum, Integer, String, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 

@@ -193,7 +193,9 @@ class AuthService:
 
     @staticmethod
     def generate_token_response(user: User) -> dict:
-        token = create_access_token(user.id)
+        access_token = create_access_token(user.id)
+        refresh_token = create_refresh_token(user.id)
+
         user_dict = {
             "id": user.id,
             "user_id": user.user_id,
@@ -202,12 +204,16 @@ class AuthService:
             "first_name": user.first_name,
             "last_name": user.last_name,
             "full_name": user.full_name,
+            "mobile_no": user.mobile_no,
+            "dob": user.dob.isoformat() if user.dob else None,
             "role": user.role,
             "avatar_url": user.avatar_url,
             "followers_count": user.followers_count,
         }
         return {
-            "access_token": token,
+            "access_token": access_token,
+            "refresh_token": refresh_token,
             "token_type": "bearer",
             "user": user_dict,
+            **user_dict,
         }
