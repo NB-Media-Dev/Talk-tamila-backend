@@ -67,9 +67,9 @@ class AuthService:
                 send_otp_email(user.email, otp)
             else:
                 send_otp_sms(user.mobile_no, otp)
-        except Exception:
+        except Exception as e:
+            print(f"EMAIL ERROR: {e}")
             logger.exception("Failed to deliver password-reset OTP")
-
     @staticmethod
     def _clear_otp(db: Session, user: User) -> None:
         user.reset_otp = None

@@ -61,6 +61,19 @@ class RegisterRequest(BaseModel):
             raise ValueError("Username must be at least 3 characters.")
         return v
 
+    @field_validator("email")
+    @classmethod
+    def valid_email(cls, v: str) -> str:
+        import re
+        v = v.strip().lower()
+        pattern = r'^[^\s@]+@[^\s@]+\.[^\s@]+$'
+        if not v or not re.match(pattern, v):
+            raise ValueError("Enter a valid email address like user@example.com")
+        parts = v.split("@")
+        if len(parts) != 2 or "." not in parts[1] or len(parts[1]) < 3:
+            raise ValueError("Enter a valid email address like user@example.com")
+        return v
+
     @field_validator("first_name", "last_name")
     @classmethod
     def names_required(cls, v: str, info) -> str:
