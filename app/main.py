@@ -123,7 +123,6 @@ async def validation_exception_handler(request, exc: RequestValidationError):
 
 
 @app.get("/health", tags=["Health"])
-@app.get("/api/health", tags=["Health"])
 def health_check() -> dict:
     return {
         "status": "ok",
@@ -368,4 +367,3 @@ routers = [
 
 for r in routers:
     app.include_router(r, prefix=settings.API_V1_PREFIX)
-    app.include_router(r, prefix="/api")
