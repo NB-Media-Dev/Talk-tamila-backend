@@ -27,14 +27,12 @@ class Settings(BaseSettings):
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24
     REFRESH_TOKEN_EXPIRE_MINUTES: int = 60 * 24 * 7
 
-    RESEND_API_KEY: str = ""
+    SMTP_FROM_NAME: str = "Talk Tamila"
 
     SMTP_HOST: str = "smtp.gmail.com"
-    SMTP_PORT: int = 587
     SMTP_USERNAME: str = ""
     SMTP_PASSWORD: str = ""
     SMTP_FROM_EMAIL: str = ""
-    SMTP_FROM_NAME: str = "Talk Tamila"
 
     BACKEND_CORS_ORIGINS: Union[str, List[str]] = [
         "http://localhost:3000",
