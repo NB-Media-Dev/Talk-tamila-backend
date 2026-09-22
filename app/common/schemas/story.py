@@ -379,3 +379,21 @@ class MyStoryAnalyticsResponse(BaseModel):
     stories: List[StoryAnalyticsDetail]
     model_config = ConfigDict(from_attributes=True)
 
+
+class SlideOwnerFeedResponse(BaseModel):
+    id: int
+    content: Optional[str] = None
+    imageUrl: Optional[str] = None
+    media_url: Optional[str] = None
+    views_count: int = 0
+    model_config = ConfigDict(from_attributes=True)
+
+
+class StoryOwnerFeedResponse(BaseModel):
+    story_id: int
+    userName: Optional[str] = "Your Story"
+    author_id: Optional[int] = None
+    slides: List[SlideOwnerFeedResponse] = []
+    model_config = ConfigDict(from_attributes=True)
+
+

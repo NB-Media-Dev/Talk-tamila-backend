@@ -114,6 +114,7 @@ from app.common.schemas.story import (
     StoryWithMetrics,
     StoryPauseRequest,
     MyStoryAnalyticsResponse,
+    StoryOwnerFeedResponse,
 )
 from app.common.services.music_service import MusicService
 from app.common.services.story_service import (
@@ -199,6 +200,16 @@ def get_my_story_analytics(
 ) -> dict:
     """Detailed Instagram-style breakdown of who viewed, liked, and replied to the logged-in user's active stories."""
     return StoryService.get_my_story_analytics(current_user, db)
+
+
+@router.get("/owner-feed", response_model=List[StoryOwnerFeedResponse])
+def get_owner_story_feed(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> List[StoryOwnerFeedResponse]:
+    """Stories data structure for the owner with granular per-slide view metrics."""
+    return StoryService.get_owner_feed(current_user, db)
+
 
 
 
@@ -406,16 +417,21 @@ def delete_story(
 
 
 
+@router.post("/slides/{slide_id:int}/view")
 @router.post("/{story_id:int}/view")
 def record_story_view(
-    story_id: int,
+    story_id: Optional[int] = None,
+    slide_id: Optional[int] = None,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> dict:
-    """Record that the current user viewed a story.
+    """Record that the current user viewed a specific slide or story.
     Duplicate views from the same user are silently ignored (deduplicated).
     """
-    return StoryService.record_view(story_id, current_user, db)
+    target_id = slide_id if slide_id is not None else story_id
+    if target_id is None:
+        raise HTTPException(status_code=400, detail="Missing slide or story id")
+    return StoryService.record_view(target_id, current_user, db)
 
 
 @router.post("/{story_id:int}/like")

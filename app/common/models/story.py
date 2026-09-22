@@ -90,13 +90,34 @@ class StoryView(Base):
     )
 
     view_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    story_id: Mapped[int] = mapped_column(ForeignKey("stories.story_id", ondelete="CASCADE"), nullable=False)
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.user_id", ondelete="CASCADE"), nullable=False)
+    story_id: Mapped[int] = mapped_column(ForeignKey("stories.story_id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.user_id", ondelete="CASCADE"), nullable=False, index=True)
     user_name: Mapped[str | None] = mapped_column(String(100), nullable=True)
     viewed_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
     story: Mapped["Story"] = relationship("Story", back_populates="views")
     user: Mapped["User"] = relationship("User")
+
+    @property
+    def id(self) -> int:
+        return self.view_id
+
+    @property
+    def slide_id(self) -> int:
+        return self.story_id
+
+    @slide_id.setter
+    def slide_id(self, value: int) -> None:
+        self.story_id = value
+
+    @property
+    def viewer_id(self) -> int:
+        return self.user_id
+
+    @viewer_id.setter
+    def viewer_id(self, value: int) -> None:
+        self.user_id = value
+
 
 
 class StoryLike(Base):
