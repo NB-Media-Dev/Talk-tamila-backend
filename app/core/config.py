@@ -27,12 +27,7 @@ class Settings(BaseSettings):
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24
     REFRESH_TOKEN_EXPIRE_MINUTES: int = 60 * 24 * 7
 
-    SMTP_FROM_NAME: str = "Talk Tamila"
-
-    SMTP_HOST: str = "smtp.gmail.com"
-    SMTP_USERNAME: str = ""
-    SMTP_PASSWORD: str = ""
-    SMTP_FROM_EMAIL: str = ""
+    BREVO_API_KEY: str = ""
 
     BACKEND_CORS_ORIGINS: Union[str, List[str]] = [
         "http://localhost:3000",

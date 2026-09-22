@@ -373,7 +373,7 @@ def refresh_token(payload: RefreshRequest, db: Session = Depends(get_db)) -> dic
     }
 
 
-@auth_router.get("/me")
+@auth_router.get("/profile")
 def get_me(current_user: User = Depends(get_current_user)) -> dict:
     return {
         "id": current_user.user_id,
@@ -392,7 +392,7 @@ def get_me(current_user: User = Depends(get_current_user)) -> dict:
         "followers_count": current_user.followers_count,
     }
 
-@auth_router.patch("/me")
+@auth_router.patch("/profile")
 def update_me(
     payload: dict,
     current_user: User = Depends(get_current_user),
