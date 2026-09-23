@@ -151,7 +151,6 @@ async def validation_exception_handler(request, exc: RequestValidationError):
 
 
 @app.get("/health", tags=["Health"])
-@app.get("/api/health", tags=["Health"])
 def health_check() -> dict:
     return {
         "status": "ok",
@@ -215,7 +214,6 @@ def check_availability(
 
 
 @auth_router.post("/signup", status_code=status.HTTP_201_CREATED)
-@auth_router.post("/register", status_code=status.HTTP_201_CREATED)
 def signup(payload: RegisterRequest, db: Session = Depends(get_db)) -> dict:
     user = AuthService.register(db, payload)
     access_token = create_access_token(user.id)
@@ -275,20 +273,23 @@ def get_profile(current_user: User = Depends(get_current_user)) -> dict:
     Retrieve the profile details of the currently authenticated logged-in user.
     """
     return {
-        "user": {
-            "id": current_user.user_id,
-            "user_id": current_user.user_id,
-            "username": current_user.username,
-            "email": current_user.email,
-            "full_name": current_user.full_name,
-            "mobile_no": current_user.mobile_no,
-            "dob": current_user.dob.isoformat() if current_user.dob else None,
-            "role": current_user.role,
-        }
+        "id": current_user.user_id,
+        "user_id": current_user.user_id,
+        "username": current_user.username,
+        "email": current_user.email,
+        "first_name": current_user.first_name,
+        "last_name": current_user.last_name,
+        "full_name": current_user.full_name,
+        "mobile_no": current_user.mobile_no,
+        "dob": current_user.dob.isoformat() if current_user.dob else None,
+        "role": current_user.role,
+        "avatar_url": current_user.avatar_url,
+        "bio": current_user.bio,
+        "location": current_user.location,
+        "followers_count": current_user.followers_count,
     }
 
-@auth_router.post("/login", openapi_extra=login_schema_extra ,status_code=status.HTTP_200_OK)
-@auth_router.post("/signin", openapi_extra=login_schema_extra ,status_code=status.HTTP_200_OK)
+@auth_router.post("/login", openapi_extra=login_schema_extra, status_code=status.HTTP_200_OK)
 async def login(request: Request, db: Session = Depends(get_db)) -> dict:
     content_type = request.headers.get("content-type", "")
     username_val = None
@@ -392,24 +393,6 @@ def refresh_token(payload: RefreshRequest, db: Session = Depends(get_db)) -> dic
     }
 
 
-@auth_router.get("/me")
-def get_me(current_user: User = Depends(get_current_user)) -> dict:
-    return {
-        "id": current_user.user_id,
-        "user_id": current_user.user_id,
-        "username": current_user.username,
-        "email": current_user.email,
-        "first_name": current_user.first_name,
-        "last_name": current_user.last_name,
-        "full_name": current_user.full_name,
-        "mobile_no": current_user.mobile_no,
-        "dob": current_user.dob.isoformat() if current_user.dob else None,
-        "role": current_user.role,
-        "avatar_url": current_user.avatar_url,
-        "bio": current_user.bio,
-        "location": current_user.location,
-        "followers_count": current_user.followers_count,
-    }
 
 
 @auth_router.post("/change-password")
@@ -452,4 +435,3 @@ routers = [
 
 for r in routers:
     app.include_router(r, prefix=settings.API_V1_PREFIX)
-    app.include_router(r, prefix="/api")

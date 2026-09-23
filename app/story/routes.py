@@ -155,8 +155,6 @@ def get_stories_feed(
 
 
 @router.get("", response_model=List[StoryGroupResponse])
-@router.get("/active", response_model=List[StoryGroupResponse])
-@router.get("/grouped", response_model=List[StoryGroupResponse])
 def list_active_stories(
     role: Optional[str] = Query(None, description="Filter by role: influencer | freelancer | admin"),
     current_user: Optional[User] = Depends(get_optional_current_user),
@@ -413,21 +411,16 @@ def delete_story(
 
 
 
-@router.post("/slides/{slide_id:int}/view")
 @router.post("/{story_id:int}/view")
 def record_story_view(
-    story_id: Optional[int] = None,
-    slide_id: Optional[int] = None,
+    story_id: int,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> dict:
-    """Record that the current user viewed a specific slide or story.
+    """Record that the current user viewed a specific story or slide.
     Duplicate views from the same user are silently ignored (deduplicated).
     """
-    target_id = slide_id if slide_id is not None else story_id
-    if target_id is None:
-        raise HTTPException(status_code=400, detail="Missing slide or story id")
-    return StoryService.record_view(target_id, current_user, db)
+    return StoryService.record_view(story_id, current_user, db)
 
 
 @router.post("/{story_id:int}/like")
@@ -457,7 +450,7 @@ def react_to_story(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> StoryReactResponse:
-    """Send an emoji reaction to a story (e.g. ❤️ 🔥 😂 😮).
+    """Send an emoji reaction to a story (e.g. heart, fire, laugh, wow).
     Reactions are stored separately from regular likes.
     Duplicate reactions with the same emoji are deduplicated.
     """
@@ -465,7 +458,6 @@ def react_to_story(
 
 
 @router.post("/{story_id:int}/reply", status_code=status.HTTP_201_CREATED)
-@router.post("/{story_id:int}/comments", status_code=status.HTTP_201_CREATED)
 def reply_to_story(
     story_id: int,
     payload: StoryReplyRequest,
@@ -475,20 +467,6 @@ def reply_to_story(
     """Send a text reply to a story. You cannot reply to your own story."""
     return StoryService.comment_story(story_id, payload.text, current_user, db)
 
-
-class StoryReplyLegacyPayload(BaseModel):
-    story_id: int
-    text: str = Field(..., min_length=1, max_length=1000)
-
-
-@router.post("/reply")
-def reply_legacy(
-    payload: StoryReplyLegacyPayload,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-) -> dict:
-    """Legacy reply endpoint that accepts story_id in the request body."""
-    return StoryService.comment_story(payload.story_id, payload.text, current_user, db)
 
 
 @router.get("/{story_id:int}/comments", response_model=List[StoryReplyResponse])
@@ -570,7 +548,7 @@ def share_story(
     """Record that the current user shared a story.
 
     - **platform**: `copy_link` | `whatsapp` | `dm` | `other`
-    - **target_user_id**: optional – if sharing directly to another user (sends notification)
+    - **target_user_id**: optional - if sharing directly to another user (sends notification)
     """
     platform = payload.platform if payload and payload.platform else "copy_link"
     target_user_id = payload.target_user_id if payload else None
@@ -614,7 +592,6 @@ def report_story(
 
 
 @router.post("/mute/{user_id:int}", response_model=StoryMuteResponse)
-@router.post("/users/{user_id:int}/mute", response_model=StoryMuteResponse)
 def mute_creator(
     user_id: int,
     current_user: User = Depends(get_current_user),
@@ -625,7 +602,6 @@ def mute_creator(
 
 
 @router.delete("/mute/{user_id:int}", response_model=StoryMuteResponse)
-@router.delete("/users/{user_id:int}/mute", response_model=StoryMuteResponse)
 def unmute_creator(
     user_id: int,
     current_user: User = Depends(get_current_user),

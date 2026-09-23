@@ -22,7 +22,6 @@ router = APIRouter(prefix="/admin", tags=["Admin"])
 
 
 @router.get("/overview", response_model=AdminOverview)
-@router.get("/stats", response_model=AdminOverview)
 def get_admin_overview(
     current_admin: User = Depends(get_current_admin),
     db: Session = Depends(get_db),
@@ -77,7 +76,6 @@ def get_platform_story_stats(
 
 
 @router.get("/stories/my", response_model=List[StoryWithMetrics])
-@router.get("/my-stories", response_model=List[StoryWithMetrics])
 def get_admin_my_stories(
     current_admin: User = Depends(get_current_admin),
     db: Session = Depends(get_db),

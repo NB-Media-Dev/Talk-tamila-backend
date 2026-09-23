@@ -9,21 +9,20 @@ from app.common.schemas.story import StoryStatsResponse, StoryWithMetrics
 router = APIRouter(prefix="/freelancer", tags=["Freelancer"])
 
 
-@router.get("/health")
-def freelancer_health():
-    return {"status": "ok", "role": "freelancer"}
-
-
 @router.get("/stats")
 def get_freelancer_stats(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     """Dashboard stats for freelancer."""
+    # Consolidating to use real StoryService stats instead of hardcoded dict
+    from app.common.services.story_service import StoryService
+    stats = StoryService.get_my_stats(current_user, db)
     return {
         "user_id": current_user.id,
         "username": current_user.username,
         "role": current_user.role,
+        "story_stats": stats,
         "message": "Freelancer dashboard stats",
     }
 
