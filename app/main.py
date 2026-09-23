@@ -216,8 +216,6 @@ def check_availability(
 @auth_router.post("/signup", status_code=status.HTTP_201_CREATED)
 def signup(payload: RegisterRequest, db: Session = Depends(get_db)) -> dict:
     user = AuthService.register(db, payload)
-    access_token = create_access_token(user.id)
-    refresh_token = create_refresh_token(user.id)
     user_dict = {
         "id": user.user_id,
         "user_id": user.user_id,
@@ -229,9 +227,6 @@ def signup(payload: RegisterRequest, db: Session = Depends(get_db)) -> dict:
         "role": user.role,
     }
     return {
-        "access_token": access_token,
-        "refresh_token": refresh_token,
-        "token_type": "bearer",
         "user": user_dict,
         **user_dict,
     }
