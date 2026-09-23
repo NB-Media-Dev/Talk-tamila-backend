@@ -127,3 +127,23 @@ def admin_restore_story(
     """Admin-only: restore a previously deleted story."""
     return AdminService.restore_story(story_id, db)
 
+
+@router.patch("/users/{user_id:int}/ban")
+def admin_ban_user(
+    user_id: int,
+    current_admin: User = Depends(get_current_admin),
+    db: Session = Depends(get_db),
+) -> dict:
+    """Admin-only: suspend a user account. They can no longer log in, and any
+    token they're already holding stops working on the next request."""
+    return AdminService.ban_user(user_id, current_admin, db)
+
+
+@router.patch("/users/{user_id:int}/unban")
+def admin_unban_user(
+    user_id: int,
+    current_admin: User = Depends(get_current_admin),
+    db: Session = Depends(get_db),
+) -> dict:
+    """Admin-only: reinstate a previously suspended user account."""
+    return AdminService.unban_user(user_id, db)

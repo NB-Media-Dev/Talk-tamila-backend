@@ -1,13 +1,10 @@
 from datetime import date, datetime
-from typing import Optional, TYPE_CHECKING
+from typing import Optional
 from sqlalchemy import Boolean, Date, DateTime, Enum, Integer, String, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
 
-if TYPE_CHECKING:
-    from app.common.models.social import Profile
-    from app.common.models.story import Story
 
 class User(Base):
     __tablename__ = "users"
@@ -26,7 +23,12 @@ class User(Base):
     )
     dob: Mapped[date | None] = mapped_column(Date, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
-    reset_otp: Mapped[Optional[str]] = mapped_column(String(6), nullable=True)
+    # Real, persisted ban/suspend flag. Previously this was a hardcoded property
+    # that always returned True, so nothing could ever actually suspend a user
+    # even though get_current_user() already checked it. See AdminService.ban_user.
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1", nullable=False)
+    # Stores a salted hash of the OTP, never the raw 6-digit code (see AuthService._hash_otp).
+    reset_otp: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     reset_otp_expires: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     reset_otp_verified: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     reset_otp_attempts: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
@@ -53,10 +55,6 @@ class User(Base):
     @hashed_password.setter
     def hashed_password(self, value: str):
         self.password = value
-
-    @property
-    def is_active(self) -> bool:
-        return True
 
     @property
     def is_admin(self) -> bool:

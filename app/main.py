@@ -82,8 +82,35 @@ from app.utils.seed import seed_db_data
 async def lifespan(app: FastAPI):
     try:
         Base.metadata.create_all(bind=engine)
+
+        with engine.connect() as conn:
+            for stmt in [
+                "ALTER TABLE stories MODIFY COLUMN media_type VARCHAR(20) NOT NULL DEFAULT 'image'",
+                "ALTER TABLE stories MODIFY COLUMN media_url LONGTEXT NOT NULL",
+                "ALTER TABLE stories MODIFY COLUMN caption LONGTEXT NULL",
+                "ALTER TABLE stories MODIFY COLUMN music_url LONGTEXT NULL",
+                "ALTER TABLE stories MODIFY COLUMN music_thumbnail LONGTEXT NULL",
+                "ALTER TABLE music_tracks ADD COLUMN language VARCHAR(50) DEFAULT 'Tamil'",
+                "ALTER TABLE music_tracks ADD COLUMN genre VARCHAR(50) DEFAULT 'Tamil'",
+                "ALTER TABLE music_tracks ADD COLUMN is_trending BOOLEAN DEFAULT TRUE",
+                "ALTER TABLE music_tracks ADD COLUMN cover_url VARCHAR(500) NULL",
+                "ALTER TABLE music_tracks ADD COLUMN duration_seconds FLOAT DEFAULT 60.0",
+                "ALTER TABLE users ADD COLUMN reset_otp VARCHAR(6) NULL",
+                "ALTER TABLE users ADD COLUMN reset_otp_expires DATETIME NULL",
+                "ALTER TABLE users ADD COLUMN reset_otp_verified BOOLEAN DEFAULT FALSE",
+                "ALTER TABLE users ADD COLUMN reset_otp_attempts INT NOT NULL DEFAULT 0",
+                "ALTER TABLE users MODIFY COLUMN reset_otp VARCHAR(64) NULL",
+                "ALTER TABLE users ADD COLUMN is_active BOOLEAN NOT NULL DEFAULT TRUE",
+            ]:
+                try:
+                    conn.execute(text(stmt))
+                    conn.commit()
+                except Exception:
+                    pass
+
         db = SessionLocal()
         try:
+            # Demo accounts (admin@talktamila.com / admin123 ...) are for local dev only.
             if settings.ENVIRONMENT.lower() != "production" and db.query(User).first() is None:
                 seed_db_data(db)
         finally:
@@ -105,7 +132,8 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origin_regex=r"^https?://.*",
+    allow_origins=settings.BACKEND_CORS_ORIGINS,
+    allow_origin_regex=settings.CORS_ORIGIN_REGEX or None,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -123,6 +151,7 @@ async def validation_exception_handler(request, exc: RequestValidationError):
 
 
 @app.get("/health", tags=["Health"])
+@app.get("/api/health", tags=["Health"])
 def health_check() -> dict:
     return {
         "status": "ok",
@@ -186,6 +215,7 @@ def check_availability(
 
 
 @auth_router.post("/signup", status_code=status.HTTP_201_CREATED)
+@auth_router.post("/register", status_code=status.HTTP_201_CREATED)
 def signup(payload: RegisterRequest, db: Session = Depends(get_db)) -> dict:
     user = AuthService.register(db, payload)
     access_token = create_access_token(user.id)
@@ -239,17 +269,51 @@ login_schema_extra = {
 }
 
 
-@auth_router.post("/login", openapi_extra=login_schema_extra ,status_code=status.HTTP_200_OK)
-async def login(request: Request, db: Session = Depends(get_db)) -> dict:
-    # 1. Try to get data from JSON, otherwise try Form data
-    try:
-        body = await request.json()
-    except Exception:
-        body = await request.form()
+@auth_router.get("/profile", status_code=status.HTTP_200_OK)
+def get_profile(current_user: User = Depends(get_current_user)) -> dict:
+    """
+    Retrieve the profile details of the currently authenticated logged-in user.
+    """
+    return {
+        "user": {
+            "id": current_user.user_id,
+            "user_id": current_user.user_id,
+            "username": current_user.username,
+            "email": current_user.email,
+            "full_name": current_user.full_name,
+            "mobile_no": current_user.mobile_no,
+            "dob": current_user.dob.isoformat() if current_user.dob else None,
+            "role": current_user.role,
+        }
+    }
 
-    # 2. Extract username/email and password
-    username_val = body.get("username") or body.get("email") or body.get("username_or_email")
-    password_val = body.get("password")
+@auth_router.post("/login", openapi_extra=login_schema_extra ,status_code=status.HTTP_200_OK)
+@auth_router.post("/signin", openapi_extra=login_schema_extra ,status_code=status.HTTP_200_OK)
+async def login(request: Request, db: Session = Depends(get_db)) -> dict:
+    content_type = request.headers.get("content-type", "")
+    username_val = None
+    password_val = None
+
+    if "application/json" in content_type:
+        try:
+            body = await request.json()
+            username_val = body.get("username") or body.get("email") or body.get("username_or_email")
+            password_val = body.get("password")
+        except Exception:
+            raise HTTPException(status_code=400, detail="Invalid JSON body.")
+    elif "application/x-www-form-urlencoded" in content_type or "multipart/form-data" in content_type:
+        form = await request.form()
+        username_val = form.get("username") or form.get("email") or form.get("username_or_email")
+        password_val = form.get("password")
+    else:
+        try:
+            body = await request.json()
+            username_val = body.get("username") or body.get("email") or body.get("username_or_email")
+            password_val = body.get("password")
+        except Exception:
+            form = await request.form()
+            username_val = form.get("username") or form.get("email") or form.get("username_or_email")
+            password_val = form.get("password")
 
     if not username_val or not password_val:
         raise HTTPException(
@@ -257,7 +321,6 @@ async def login(request: Request, db: Session = Depends(get_db)) -> dict:
             detail="Username/email and password are required.",
         )
 
-    # 3. Authenticate the user
     user = AuthService.authenticate(db, str(username_val).strip(), str(password_val))
     if not user:
         raise HTTPException(
@@ -266,8 +329,44 @@ async def login(request: Request, db: Session = Depends(get_db)) -> dict:
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    # 4. Return the standardized response from the service
-    return AuthService.generate_token_response(user)
+    if not user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="This account has been suspended. Contact support for help.",
+        )
+
+    access_token = create_access_token(user.id)
+    refresh_token = create_refresh_token(user.id)
+
+    user_dict = {
+        "id": user.id,
+        "user_id": user.user_id,
+        "username": user.username,
+        "email": user.email,
+        "first_name": user.first_name,
+        "last_name": user.last_name,
+        "full_name": user.full_name,
+        "mobile_no": user.mobile_no,
+        "dob": user.dob.isoformat() if user.dob else None,
+        "role": user.role,
+        "avatar_url": user.avatar_url,
+        "followers_count": user.followers_count,
+    }
+
+    return {
+        "access_token": access_token,
+        "refresh_token": refresh_token,
+        "token_type": "bearer",
+        "user": user_dict,
+        "id": user.id,
+        "user_id": user.user_id,
+        "username": user.username,
+        "email": user.email,
+        "full_name": user.full_name,
+        "mobile_no": user.mobile_no,
+        "dob": user.dob.isoformat() if user.dob else None,
+        "role": user.role,
+    }
 
 
 @auth_router.post("/refresh")
@@ -293,10 +392,10 @@ def refresh_token(payload: RefreshRequest, db: Session = Depends(get_db)) -> dic
     }
 
 
-@auth_router.get("/profile")
+@auth_router.get("/me")
 def get_me(current_user: User = Depends(get_current_user)) -> dict:
     return {
-        "id": current_user.id,
+        "id": current_user.user_id,
         "user_id": current_user.user_id,
         "username": current_user.username,
         "email": current_user.email,
@@ -311,20 +410,6 @@ def get_me(current_user: User = Depends(get_current_user)) -> dict:
         "location": current_user.location,
         "followers_count": current_user.followers_count,
     }
-
-@auth_router.patch("/profile")
-def update_me(
-    payload: dict,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-) -> dict:
-    allowed = ["bio", "location", "avatar_url", "username", "full_name"]
-    for field, value in payload.items():
-        if field in allowed:
-            setattr(current_user, field, value)
-    db.commit()
-    db.refresh(current_user)
-    return {"success": True, "message": "Profile updated."}
 
 
 @auth_router.post("/change-password")
@@ -367,3 +452,4 @@ routers = [
 
 for r in routers:
     app.include_router(r, prefix=settings.API_V1_PREFIX)
+    app.include_router(r, prefix="/api")

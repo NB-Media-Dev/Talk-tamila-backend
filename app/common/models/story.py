@@ -165,6 +165,9 @@ class StoryShare(Base):
 
 class StoryReport(Base):
     __tablename__ = "story_reports"
+    __table_args__ = (
+        UniqueConstraint("story_id", "user_id", name="uq_story_reports_story_user"),
+    )
 
     report_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     story_id: Mapped[int] = mapped_column(ForeignKey("stories.story_id", ondelete="CASCADE"), nullable=False)
@@ -175,6 +178,9 @@ class StoryReport(Base):
 
 class StoryMute(Base):
     __tablename__ = "story_mutes"
+    __table_args__ = (
+        UniqueConstraint("user_id", "muted_user_id", name="uq_story_mutes_user_muted"),
+    )
 
     mute_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.user_id", ondelete="CASCADE"), nullable=False)
@@ -195,4 +201,3 @@ class StorySave(Base):
 
     story: Mapped["Story"] = relationship("Story", back_populates="saves")
     user: Mapped["User"] = relationship("User")
-

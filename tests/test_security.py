@@ -1,3 +1,5 @@
+import pytest
+
 from app.core.security import create_access_token, create_refresh_token
 
 
@@ -38,15 +40,18 @@ def test_cannot_self_register_as_admin(client):
 
 
 def test_otp_is_voided_after_too_many_wrong_guesses(client, db_session, monkeypatch):
-    # Never send a real e-mail from the test suite.
-    monkeypatch.setattr("app.common.services.auth_service.send_otp_email", lambda *a, **k: None)
+    # Never send a real e-mail from the test suite; capture the OTP it would have sent.
+    sent = {}
+    monkeypatch.setattr(
+        "app.common.services.auth_service.send_otp_email",
+        lambda to, otp: sent.__setitem__("otp", otp),
+    )
     from app.common.models.user import User
     from app.common.services.auth_service import AuthService, MAX_OTP_ATTEMPTS
 
     user = db_session.query(User).filter(User.email == "priya@talktamila.com").first()
     AuthService.create_otp(db_session, user.email)
-    db_session.refresh(user)
-    real_otp = user.reset_otp
+    real_otp = sent["otp"]
     wrong = "000000" if real_otp != "000000" else "111111"
 
     for _ in range(MAX_OTP_ATTEMPTS):
@@ -95,3 +100,99 @@ def test_signup_still_accepts_full_name_only(client):
     # a single word is not enough: last name is required
     resp = client.post("/api/v1/auth/register", json={**payload, "email": "one@example.com", "username": "oneword", "mobile_no": "9000000125", "full_name": "Asha"})
     assert resp.status_code == 422
+
+
+def test_verified_otp_can_still_reset_after_a_few_wrong_guesses(client, db_session, monkeypatch):
+    # Regression: reset-password used to re-spend attempts on an OTP that
+    # verify_otp had already confirmed, which could void a good code.
+    sent = {}
+    monkeypatch.setattr(
+        "app.common.services.auth_service.send_otp_email",
+        lambda to, otp: sent.__setitem__("otp", otp),
+    )
+    email = "verifiedreset@example.com"
+    client.post("/api/v1/auth/register", json={
+        "email": email, "password": "secret123", "username": "verifiedreset",
+        "first_name": "V", "last_name": "R", "mobile_no": "9000000200", "dob": "1999-01-01",
+    })
+    assert client.post("/api/v1/auth/forgot-password", json={"identifier": email}).status_code == 200
+    otp = sent["otp"]
+
+    # Three wrong guesses at /verify-otp (below the 5-attempt limit).
+    for _ in range(3):
+        assert client.post("/api/v1/auth/verify-otp", json={"identifier": email, "otp": "000000"}).status_code == 400
+    assert client.post("/api/v1/auth/verify-otp", json={"identifier": email, "otp": otp}).status_code == 200
+
+    resp = client.post("/api/v1/auth/reset-password", json={"identifier": email, "otp": otp, "new_password": "brandnew123"})
+    assert resp.status_code == 200
+
+    assert client.post("/api/v1/auth/login", json={"username": "verifiedreset", "password": "brandnew123"}).status_code == 200
+
+
+def test_cors_rejects_arbitrary_origins(client):
+    # Regression: CORS used to accept any http(s) origin (allow_origin_regex=".*"),
+    # a severe risk once combined with allow_credentials=True.
+    resp = client.options(
+        "/api/v1/auth/login",
+        headers={
+            "Origin": "https://evil-phishing-site.com",
+            "Access-Control-Request-Method": "POST",
+        },
+    )
+    assert "access-control-allow-origin" not in {k.lower() for k in resp.headers.keys()}
+
+
+def test_secret_key_rejects_known_default_in_production(monkeypatch):
+    # Regression: SECRET_KEY silently fell back to a hardcoded value if unset.
+    import importlib
+    monkeypatch.setenv("SECRET_KEY", "dev_secret_key_change_in_production_jwt_9348572849")
+    monkeypatch.setenv("ENVIRONMENT", "production")
+    import app.core.config as config_module
+    try:
+        with pytest.raises(Exception):
+            importlib.reload(config_module)
+    finally:
+        monkeypatch.setenv("SECRET_KEY", "x" * 64)
+        monkeypatch.setenv("ENVIRONMENT", "development")
+        importlib.reload(config_module)
+
+
+def test_expired_story_not_reachable_by_direct_id(client, db_session, creator_auth_headers):
+    from datetime import datetime, timedelta
+    from app.common.models import Story
+
+    payload = {
+        "media_url": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
+        "media_type": "image",
+        "caption": "expiring soon",
+        "duration_hours": 24,
+    }
+    resp = client.post("/api/stories", json=payload, headers=creator_auth_headers)
+    assert resp.status_code == 201
+    story_id = resp.json()["id"]
+
+    story = db_session.get(Story, story_id)
+    story.expires_at = datetime.utcnow() - timedelta(hours=1)
+    db_session.commit()
+
+    resp = client.get(f"/api/stories/{story_id}", headers=creator_auth_headers)
+    assert resp.status_code == 404
+
+
+def test_otp_is_hashed_at_rest(db_session, monkeypatch):
+    # Regression: reset_otp used to store the raw 6-digit code; a DB leak
+    # would have exposed every pending reset code as-is.
+    sent = {}
+    monkeypatch.setattr(
+        "app.common.services.auth_service.send_otp_email",
+        lambda to, otp: sent.__setitem__("otp", otp),
+    )
+    from app.common.models.user import User
+    from app.common.services.auth_service import AuthService
+
+    user = db_session.query(User).filter(User.email == "priya@talktamila.com").first()
+    AuthService.create_otp(db_session, user.email)
+    db_session.refresh(user)
+
+    assert user.reset_otp != sent["otp"]
+    assert len(user.reset_otp) == 64  # sha256 hex digest, not the 6-digit code

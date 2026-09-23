@@ -130,13 +130,23 @@ class ForgotPasswordRequest(BaseModel):
     @classmethod
     def validate_identifier(cls, v: str) -> str:
         v = v.strip()
+        if not v:
+            raise ValueError("Enter your email, mobile number, or username.")
+
         if "@" in v:
             if "." not in v.split("@")[-1]:
                 raise ValueError("Enter a valid email address.")
-        else:
-            digits = v.replace("+", "").replace(" ", "")
-            if not digits.isdigit() or not (7 <= len(digits) <= 15):
+            return v
+
+        digits = v.replace("+", "").replace(" ", "")
+        if digits.isdigit():
+            if not (7 <= len(digits) <= 15):
                 raise ValueError("Enter a valid phone number.")
+            return v
+
+        # Not shaped like an email or a phone number — treat it as a username.
+        if len(v) < 3:
+            raise ValueError("Enter a valid email, mobile number, or username.")
         return v
 
 

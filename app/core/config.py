@@ -27,13 +27,24 @@ class Settings(BaseSettings):
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24
     REFRESH_TOKEN_EXPIRE_MINUTES: int = 60 * 24 * 7
 
-    BREVO_API_KEY: str = ""
+    SMTP_HOST: str = "smtp.gmail.com"
+    SMTP_PORT: int = 587
+    SMTP_USERNAME: str = ""
+    SMTP_PASSWORD: str = ""
+    SMTP_FROM_EMAIL: str = ""
+    SMTP_FROM_NAME: str = "Talk Tamila"
 
     BACKEND_CORS_ORIGINS: Union[str, List[str]] = [
         "http://localhost:3000",
         "http://192.168.0.72:3000",
         "http://localhost:5173",
+        "https://talktamila-adminpanel-s8pg.vercel.app",
     ]
+
+    # Optional: a single extra regex (e.g. r"^https://talktamila-.*\.vercel\.app$")
+    # for platforms like Vercel where preview URLs change on every deploy.
+    # Left empty by default - CORS is otherwise limited to BACKEND_CORS_ORIGINS.
+    CORS_ORIGIN_REGEX: str = ""
 
     @field_validator("BACKEND_CORS_ORIGINS", mode="after")
     @classmethod
@@ -48,6 +59,18 @@ class Settings(BaseSettings):
                 except Exception:
                     pass
             return [origin.strip() for origin in v.split(",") if origin.strip()]
+        return v
+
+    @field_validator("SECRET_KEY", mode="after")
+    @classmethod
+    def reject_default_secret_in_production(cls, v: str, info) -> str:
+        insecure_default = "dev_secret_key_change_in_production_jwt_9348572849"
+        env = (info.data.get("ENVIRONMENT") or "development").lower()
+        if env == "production" and (v == insecure_default or len(v) < 32):
+            raise ValueError(
+                "SECRET_KEY must be set to a strong, unique value via the SECRET_KEY "
+                "environment variable when ENVIRONMENT=production."
+            )
         return v
 
 

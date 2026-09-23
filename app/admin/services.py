@@ -252,3 +252,25 @@ class AdminService:
         db.commit()
         return {"success": True, "message": f"Story {story_id} restored by Admin"}
 
+    @staticmethod
+    def ban_user(user_id: int, current_admin: User, db: Session) -> dict:
+        if user_id == current_admin.user_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="You cannot suspend your own account.",
+            )
+        user = db.get(User, user_id)
+        if not user:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+        user.is_active = False
+        db.commit()
+        return {"success": True, "message": f"User {user_id} suspended by Admin"}
+
+    @staticmethod
+    def unban_user(user_id: int, db: Session) -> dict:
+        user = db.get(User, user_id)
+        if not user:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+        user.is_active = True
+        db.commit()
+        return {"success": True, "message": f"User {user_id} reinstated by Admin"}
