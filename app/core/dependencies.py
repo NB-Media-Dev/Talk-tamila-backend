@@ -33,11 +33,6 @@ def _extract_token(request: Request, token: Optional[str]) -> Optional[str]:
 
 
 def _user_from_access_token(db: Session, raw_token: Optional[str]) -> Optional[User]:
-    """Resolve the user for a valid *access* token, otherwise None.
-
-    Identity comes only from a signed JWT. Refresh tokens are rejected, and
-    there is no header / environment based fallback.
-    """
     if not raw_token:
         return None
     try:
@@ -85,7 +80,6 @@ def get_current_admin(current_user: User = Depends(get_current_user)) -> User:
 
 
 def get_current_influencer(current_user: User = Depends(get_current_user)) -> User:
-    """Allow influencers and admins."""
     if current_user.role not in ("influencer", "admin"):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -95,7 +89,6 @@ def get_current_influencer(current_user: User = Depends(get_current_user)) -> Us
 
 
 def get_current_freelancer(current_user: User = Depends(get_current_user)) -> User:
-    """Allow freelancers and admins."""
     if current_user.role not in ("freelancer", "admin"):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -105,7 +98,6 @@ def get_current_freelancer(current_user: User = Depends(get_current_user)) -> Us
 
 
 def require_role(*roles: str):
-    """Factory that returns a dependency enforcing any of the given roles."""
     def _dep(current_user: User = Depends(get_current_user)) -> User:
         if current_user.role not in roles and not current_user.is_admin:
             raise HTTPException(

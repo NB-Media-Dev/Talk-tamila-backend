@@ -1,78 +1,3 @@
-"""
-app/story/routes.py
-===================
-Dedicated story router for TalkTamila.
-
-Covers ALL roles: influencer, freelancer, admin.
-
-API surface (all prefixed by /api/v1/stories or /api/stories):
-
-  Feed & Discovery
-  ─────────────────────────────────────────────────────
-  GET   /                         Active 24-h story feed (grouped by user)
-  GET   /feed                     Alias
-  GET   /active                   Alias
-
-  My Stories
-  ─────────────────────────────────────────────────────
-  GET   /my                       My active stories
-  GET   /me                       Alias
-  GET   /stats/me                 My aggregate engagement stats
-  GET   /archived                 My expired stories (last 30 days)
-  GET   /saved                    My saved stories
-
-  Specific User / Story
-  ─────────────────────────────────────────────────────
-  GET   /user/{user_id}           Another user's active stories
-  GET   /{story_id}               Single story detail
-
-  Upload & Create
-  ─────────────────────────────────────────────────────
-  POST  /upload                   Upload single (multipart, image/video)
-  POST  /upload-multiple          Upload batch (multipart)
-  POST  /                         Create via JSON (external URL)
-
-  Edit & Delete
-  ─────────────────────────────────────────────────────
-  PATCH /{story_id}               Edit caption / audience (owner only)
-  DELETE/{story_id}               Delete story (owner or admin)
-
-  Engagement
-  ─────────────────────────────────────────────────────
-  POST  /{story_id}/view          Record a view
-  POST  /{story_id}/like          Like
-  DELETE/{story_id}/like          Unlike
-  POST  /{story_id}/react         Emoji reaction
-  POST  /{story_id}/reply         Send a text reply
-  POST  /{story_id}/comments      Alias for reply
-  GET   /{story_id}/comments      Fetch all replies
-  POST  /{story_id}/pause         Record pause / resume state
-
-  Activity (owner only)
-  ─────────────────────────────────────────────────────
-  GET   /{story_id}/activity      Full activity (views + likes)
-  GET   /{story_id}/viewers       Paginated viewer list
-  GET   /{story_id}/likers        Paginated liker list
-
-  Share, Save, Report
-  ─────────────────────────────────────────────────────
-  POST  /{story_id}/share         Record a share
-  POST  /{story_id}/save          Save story
-  DELETE/{story_id}/save          Unsave story
-  POST  /{story_id}/report        Report story
-
-  Mute
-  ─────────────────────────────────────────────────────
-  POST  /mute/{user_id}           Mute a creator's stories
-  DELETE/mute/{user_id}           Unmute
-  GET   /mutes                    My muted creator IDs
-
-  Music
-  ─────────────────────────────────────────────────────
-  GET   /music/trending           Trending music tracks
-  GET   /music/search             Search music tracks
-"""
-
 from typing import List, Optional
 
 from fastapi import (
@@ -144,13 +69,6 @@ def get_stories_feed(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> List[StoryItemResponse]:
-    """Privacy-aware stories feed for authenticated user.
-    Returns only stories visible to the authenticated user based on privacy rules:
-    - PUBLIC stories
-    - User's own stories
-    - FOLLOWERS stories where the user follows the story author
-    - CLOSE_FRIENDS stories where the author designated the user as a close friend
-    """
     return StoryService.get_privacy_feed(current_user, db, limit=limit, offset=offset)
 
 
@@ -160,11 +78,6 @@ def list_active_stories(
     current_user: Optional[User] = Depends(get_optional_current_user),
     db: Session = Depends(get_db),
 ) -> List[StoryGroupResponse]:
-    """Active 24-hour stories grouped by creator.
-    - Viewer's own story ('Your Story') is pinned first with is_my_story=True.
-    - Unseen stories appear before fully-viewed ones.
-    - Respects privacy visibility permissions (PUBLIC, FOLLOWERS, CLOSE_FRIENDS).
-    """
     return StoryService.list_active_groups(current_user, db, role_filter=role)
 
 @router.get("/profile", response_model=List[StoryItemResponse])
@@ -172,7 +85,6 @@ def get_my_active_stories(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> List[StoryItemResponse]:
-    """Fetch only the active stories belonging to the currently authenticated user."""
     return StoryService.get_my_stories(current_user, db)
 
 
@@ -181,9 +93,6 @@ def get_my_story_stats(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> StoryStatsResponse:
-    """Aggregate engagement totals (views, likes, replies, shares) across ALL stories
-    ever created by the current user — active and expired.
-    """
     return StoryService.get_my_stats(current_user, db)
 
 
@@ -192,7 +101,6 @@ def get_my_story_analytics(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> dict:
-    """Detailed Instagram-style breakdown of who viewed, liked, and replied to the logged-in user's active stories."""
     return StoryService.get_my_story_analytics(current_user, db)
 
 
@@ -201,10 +109,7 @@ def get_owner_story_feed(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> List[StoryOwnerFeedResponse]:
-    """Stories data structure for the owner with granular per-slide view metrics."""
     return StoryService.get_owner_feed(current_user, db)
-
-
 
 
 @router.get("/archived", response_model=List[StoryArchivedItem])
@@ -212,9 +117,6 @@ def get_archived_stories(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> List[StoryArchivedItem]:
-    """Fetch expired stories from the last 30 days belonging to the current user.
-    Useful for 'Story Archive' / highlights planning.
-    """
     return StoryService.get_archived_stories(current_user, db)
 
 
@@ -223,7 +125,6 @@ def get_saved_stories(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> list:
-    """Fetch all stories the current user has saved."""
     return StoryService.get_saved_stories(current_user, db)
 
 
@@ -232,9 +133,7 @@ def get_muted_creators(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> List[int]:
-    """Return the list of user IDs whose stories the current user has muted."""
     return StoryService.get_muted_creators(current_user, db)
-
 
 
 @router.get("/music/trending", response_model=List[MusicTrackResponse])
@@ -242,7 +141,6 @@ def get_trending_music(
     limit: int = Query(default=10, ge=1, le=50),
     db: Session = Depends(get_db),
 ):
-    """Return top trending Tamil music tracks for story background music."""
     return MusicService.get_trending(db, limit)
 
 
@@ -252,9 +150,7 @@ def search_music(
     limit: int = Query(default=10, ge=1, le=50),
     db: Session = Depends(get_db),
 ):
-    """Search for music tracks by title or artist name."""
     return MusicService.search(db, q, limit)
-
 
 
 @router.get("/user/{user_id}", response_model=List[StoryItemResponse])
@@ -263,10 +159,8 @@ def get_user_stories(
     current_user: Optional[User] = Depends(get_optional_current_user),
     db: Session = Depends(get_db),
 ) -> List[StoryItemResponse]:
-    """Fetch active 24-hour stories for a specific creator by user_id."""
     caller_id = current_user.id if current_user else None
     return StoryService.get_user_stories(user_id, caller_id, db)
-
 
 
 @router.get("/{story_id:int}", response_model=StoryItemResponse)
@@ -275,10 +169,8 @@ def get_single_story(
     current_user: Optional[User] = Depends(get_optional_current_user),
     db: Session = Depends(get_db),
 ) -> StoryItemResponse:
-    """Fetch full detail for a single story by ID."""
     caller_id = current_user.id if current_user else None
     return StoryService.get_story_by_id(story_id, caller_id, db)
-
 
 
 @router.post("/upload", response_model=StoryItemResponse, status_code=status.HTTP_201_CREATED)
@@ -291,16 +183,6 @@ async def upload_single_story(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> StoryItemResponse:
-    """Upload a single image or video story (multipart/form-data).
-
-    - **file**: JPEG, PNG, WEBP, MP4, MOV, etc.
-    - **caption**: optional text overlay (max 2200 chars)
-    - **audience**: `public` | `followers` | `close_friends`
-    - **music_data**: optional JSON `{music_id, music_title, music_artist, music_url, music_duration}`
-    - **music_start_time**: second offset where the 60-second clip begins (default 0.0)
-
-    Story expires automatically after 24 hours.
-    """
     return await StoryService.upload_single(file, caption, audience, music_data, current_user, db, music_start_time=music_start_time or 0.0)
 
 
@@ -314,13 +196,6 @@ async def upload_multiple_stories(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> StoryBatchResponse:
-    """Batch-upload multiple story slides.
-
-    - **files**: list of image/video files (max 10)
-    - **captions**: JSON array e.g. `["Slide 1", "Slide 2"]`
-    - **music_start_time**: second offset for the 60-second clip window
-    - Each slide becomes an independent story sharing the same 24-h expiry window.
-    """
     return await StoryService.upload_multiple(files, captions, audience, music_data, current_user, db, music_start_time=music_start_time or 0.0)
 
 
@@ -330,12 +205,7 @@ def create_story(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> StoryItemResponse:
-    """Create a story with privacy permissions (PUBLIC, FOLLOWERS, CLOSE_FRIENDS).
-    - Authenticated user ID is strictly used as author_id.
-    - Audience accepts: PUBLIC, FOLLOWERS, CLOSE_FRIENDS.
-    """
     return StoryService.create_story(payload, current_user, db)
-
 
 
 @router.post("/text", response_model=StoryItemResponse, status_code=status.HTTP_201_CREATED)
@@ -344,7 +214,6 @@ def create_text_story(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> StoryItemResponse:
-    """Create a text-only story with gradient theme styling."""
     now_naive = make_naive(utc_now())
     expires_naive = now_naive + timedelta(hours=payload.duration_hours or DEFAULT_DURATION_HOURS)
 
@@ -383,7 +252,6 @@ def create_text_story(
     return build_story_item(story, current_user.id, db)
 
 
-
 @router.patch("/{story_id:int}", response_model=StoryItemResponse)
 def edit_story(
     story_id: int,
@@ -391,11 +259,6 @@ def edit_story(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> StoryItemResponse:
-    """Edit the caption and/or audience of your own story (owner only).
-
-    - **caption**: new text overlay (set to empty string to clear)
-    - **audience**: `public` | `followers` | `close_friends`
-    """
     return StoryService.update_story(story_id, payload.caption, payload.audience, current_user, db)
 
 
@@ -405,10 +268,8 @@ def delete_story(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Permanently delete a story. Only the owner or an admin can do this."""
     StoryService.delete_story(story_id, current_user, db)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
-
 
 
 @router.post("/{story_id:int}/view")
@@ -417,9 +278,6 @@ def record_story_view(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> dict:
-    """Record that the current user viewed a specific story or slide.
-    Duplicate views from the same user are silently ignored (deduplicated).
-    """
     return StoryService.record_view(story_id, current_user, db)
 
 
@@ -429,7 +287,6 @@ def like_story(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> dict:
-    """Like a story. You cannot like your own story."""
     return StoryService.like_story(story_id, current_user, db)
 
 
@@ -439,7 +296,6 @@ def unlike_story(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> dict:
-    """Remove a like from a story."""
     return StoryService.unlike_story(story_id, current_user, db)
 
 
@@ -450,10 +306,6 @@ def react_to_story(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> StoryReactResponse:
-    """Send an emoji reaction to a story (e.g. heart, fire, laugh, wow).
-    Reactions are stored separately from regular likes.
-    Duplicate reactions with the same emoji are deduplicated.
-    """
     return StoryService.react_to_story(story_id, payload.emoji, current_user, db)
 
 
@@ -464,9 +316,7 @@ def reply_to_story(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> dict:
-    """Send a text reply to a story. You cannot reply to your own story."""
     return StoryService.comment_story(story_id, payload.text, current_user, db)
-
 
 
 @router.get("/{story_id:int}/comments", response_model=List[StoryReplyResponse])
@@ -475,7 +325,6 @@ def get_story_comments(
     current_user: Optional[User] = Depends(get_optional_current_user),
     db: Session = Depends(get_db),
 ) -> List[StoryReplyResponse]:
-    """Fetch all text replies for a story (newest first)."""
     return StoryService.get_comments(story_id, db)
 
 
@@ -486,12 +335,10 @@ def pause_story(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> dict:
-    """Record that the user paused or resumed a story (for analytics / playback state)."""
     action = payload.action if payload else "pause"
     progress_ms = payload.progress_ms if payload else None
     slide_index = payload.slide_index if payload else None
     return StoryService.record_pause_state(story_id, action, progress_ms, slide_index, current_user, db)
-
 
 
 @router.get("/{story_id:int}/activity", response_model=StoryActivityResponse)
@@ -500,9 +347,6 @@ def get_story_activity(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> StoryActivityResponse:
-    """Full activity summary for a story: viewers + likers (owner only).
-    Returns user details for every person who viewed or liked the story.
-    """
     return StoryService.get_activity(story_id, current_user, db)
 
 
@@ -514,11 +358,6 @@ def get_story_viewers(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> PaginatedViewerResponse:
-    """Paginated list of users who viewed this story (owner or admin only).
-
-    Returns: user_id, username, full_name, avatar_url, viewed_at for each viewer.
-    Use ?page=2&page_size=20 to paginate through large view counts.
-    """
     return StoryService.get_viewers(story_id, current_user, db, page=page, page_size=page_size)
 
 
@@ -530,12 +369,7 @@ def get_story_likers(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> PaginatedLikerResponse:
-    """Paginated list of users who liked this story (owner or admin only).
-
-    Returns: user_id, username, full_name, avatar_url, liked_at for each liker.
-    """
     return StoryService.get_likers(story_id, current_user, db, page=page, page_size=page_size)
-
 
 
 @router.post("/{story_id:int}/share", response_model=StoryShareResponse)
@@ -545,11 +379,6 @@ def share_story(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> StoryShareResponse:
-    """Record that the current user shared a story.
-
-    - **platform**: `copy_link` | `whatsapp` | `dm` | `other`
-    - **target_user_id**: optional - if sharing directly to another user (sends notification)
-    """
     platform = payload.platform if payload and payload.platform else "copy_link"
     target_user_id = payload.target_user_id if payload else None
     return StoryService.share_story(story_id, platform, current_user, db, target_user_id=target_user_id)
@@ -561,7 +390,6 @@ def save_story(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> dict:
-    """Save a story to the current user's personal archive."""
     return StoryService.save_story(story_id, current_user, db)
 
 
@@ -571,7 +399,6 @@ def unsave_story(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> dict:
-    """Remove a story from the current user's saved archive."""
     return StoryService.unsave_story(story_id, current_user, db)
 
 
@@ -582,13 +409,7 @@ def report_story(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> dict:
-    """Report a story for policy violations.
-
-    - **reason**: e.g. "Spam", "Hate speech", "Nudity"
-    - **details**: optional elaboration
-    """
     return StoryService.report_story(story_id, payload.reason, current_user, db, details=payload.details)
-
 
 
 @router.post("/mute/{user_id:int}", response_model=StoryMuteResponse)
@@ -597,7 +418,6 @@ def mute_creator(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> dict:
-    """Mute a creator's stories — their stories will no longer appear in your feed."""
     return StoryService.mute_creator(user_id, current_user, db)
 
 
@@ -607,7 +427,6 @@ def unmute_creator(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> dict:
-    """Unmute a previously muted creator — their stories will reappear in your feed."""
     return StoryService.unmute_creator(user_id, current_user, db)
 
 
@@ -617,7 +436,6 @@ def add_close_friend(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> dict:
-    """Add a user to your close friends list for CLOSE_FRIENDS stories visibility."""
     return StoryService.add_close_friend(current_user.id, friend_id, db)
 
 
@@ -627,7 +445,6 @@ def remove_close_friend(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> dict:
-    """Remove a user from your close friends list."""
     return StoryService.remove_close_friend(current_user.id, friend_id, db)
 
 
@@ -636,7 +453,6 @@ def get_close_friends(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> List[int]:
-    """Get list of user IDs in your close friends list."""
     return StoryService.get_close_friends(current_user.id, db)
 
 
@@ -646,7 +462,6 @@ def follow_user(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> dict:
-    """Follow a user to gain access to their FOLLOWERS stories."""
     return StoryService.follow_user(current_user.id, user_id, db)
 
 
@@ -656,6 +471,4 @@ def unfollow_user(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> dict:
-    """Unfollow a user."""
     return StoryService.unfollow_user(current_user.id, user_id, db)
-

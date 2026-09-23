@@ -104,4 +104,3 @@ class CloseFriend(Base):
 
     user: Mapped["User"] = relationship("User", foreign_keys=[user_id])
     friend: Mapped["User"] = relationship("User", foreign_keys=[friend_id])
-

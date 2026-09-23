@@ -26,7 +26,6 @@ def get_admin_overview(
     current_admin: User = Depends(get_current_admin),
     db: Session = Depends(get_db),
 ) -> AdminOverview:
-    """Dashboard overview for Admin (total users, stories, views, likes, reports)."""
     return AdminService.get_overview(db)
 
 
@@ -41,7 +40,6 @@ def get_all_stories(
     current_admin: User = Depends(get_current_admin),
     db: Session = Depends(get_db),
 ) -> List[AdminStoryItem]:
-    """Admin-only: fetch all stories across the platform with filtering, pagination, and metrics."""
     return AdminService.get_all_stories(
         db=db,
         role=role,
@@ -59,7 +57,6 @@ def admin_create_story(
     current_admin: User = Depends(get_current_admin),
     db: Session = Depends(get_db),
 ) -> StoryItemResponse:
-    """Admin-only: create an official platform announcement story (strictly and always PUBLIC)."""
     from app.common.enums import StoryAudienceEnum
     from app.common.services.story_service import StoryService
     payload.audience = StoryAudienceEnum.PUBLIC
@@ -71,7 +68,6 @@ def get_platform_story_stats(
     current_admin: User = Depends(get_current_admin),
     db: Session = Depends(get_db),
 ) -> AdminPlatformStoryStats:
-    """Admin-only: platform-wide aggregate story statistics."""
     return AdminService.get_platform_story_stats(db)
 
 
@@ -80,7 +76,6 @@ def get_admin_my_stories(
     current_admin: User = Depends(get_current_admin),
     db: Session = Depends(get_db),
 ) -> List[StoryWithMetrics]:
-    """Admin-only: fetch your own stories from the last 7 days with full engagement metrics."""
     from app.common.services.story_service import StoryService
     return StoryService.get_my_stories_with_metrics(current_admin, db)
 
@@ -90,7 +85,6 @@ def get_admin_my_story_stats(
     current_admin: User = Depends(get_current_admin),
     db: Session = Depends(get_db),
 ) -> StoryStatsResponse:
-    """Admin-only: aggregate engagement stats for stories created by this admin."""
     from app.common.services.story_service import StoryService
     return StoryService.get_my_stats(current_admin, db)
 
@@ -102,7 +96,6 @@ def get_story_reports(
     current_admin: User = Depends(get_current_admin),
     db: Session = Depends(get_db),
 ) -> List[AdminReportItem]:
-    """Admin-only: list all reported stories for moderation review."""
     return AdminService.get_story_reports(db, limit=limit, offset=offset)
 
 
@@ -112,7 +105,6 @@ def admin_delete_story(
     current_admin: User = Depends(get_current_admin),
     db: Session = Depends(get_db),
 ) -> dict:
-    """Admin-only: moderate/delete any story on the platform."""
     return AdminService.delete_story(story_id, db)
 
 
@@ -122,7 +114,6 @@ def admin_restore_story(
     current_admin: User = Depends(get_current_admin),
     db: Session = Depends(get_db),
 ) -> dict:
-    """Admin-only: restore a previously deleted story."""
     return AdminService.restore_story(story_id, db)
 
 
@@ -132,8 +123,6 @@ def admin_ban_user(
     current_admin: User = Depends(get_current_admin),
     db: Session = Depends(get_db),
 ) -> dict:
-    """Admin-only: suspend a user account. They can no longer log in, and any
-    token they're already holding stops working on the next request."""
     return AdminService.ban_user(user_id, current_admin, db)
 
 
@@ -143,5 +132,4 @@ def admin_unban_user(
     current_admin: User = Depends(get_current_admin),
     db: Session = Depends(get_db),
 ) -> dict:
-    """Admin-only: reinstate a previously suspended user account."""
     return AdminService.unban_user(user_id, db)

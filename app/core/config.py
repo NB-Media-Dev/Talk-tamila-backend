@@ -41,9 +41,6 @@ class Settings(BaseSettings):
         "https://talktamila-adminpanel-s8pg.vercel.app",
     ]
 
-    # Optional: a single extra regex (e.g. r"^https://talktamila-.*\.vercel\.app$")
-    # for platforms like Vercel where preview URLs change on every deploy.
-    # Left empty by default - CORS is otherwise limited to BACKEND_CORS_ORIGINS.
     CORS_ORIGIN_REGEX: str = ""
 
     @field_validator("BACKEND_CORS_ORIGINS", mode="after")

@@ -80,9 +80,6 @@ def get_time_ago(dt: Optional[datetime]) -> str:
 
 
 async def file_to_base64_data_url(file: UploadFile) -> Tuple[str, str]:
-    """Encodes uploaded story media to a Base64 Data URL.
-    Stored strictly in MySQL demousertable (LONGTEXT) — NEVER saved to the filesystem uploads/.
-    """
     content = await file.read()
     if not content:
         raise HTTPException(
@@ -260,12 +257,6 @@ class StoryService:
         db: Session,
         role_filter: Optional[str] = None,
     ) -> List[StoryGroupResponse]:
-        """Fetch active 24-hour stories grouped by user matching Instagram concept:
-        - Self stories are placed first with is_my_story = True
-        - All other creators follow
-        - Provides both slides for Previewstories.tsx and stories for full metadata
-        - Unseen stories indicator (gradient ring) vs all-viewed indicator (grey ring)
-        """
         now_naive = make_naive(utc_now())
         cutoff = now_naive - timedelta(hours=DEFAULT_DURATION_HOURS)
 
@@ -374,7 +365,6 @@ class StoryService:
 
     @staticmethod
     def get_my_stories(current_user: User, db: Session) -> List[StoryItemResponse]:
-        """Fetch active stories strictly belonging to current authenticated user ('Your Story')."""
         now_naive = make_naive(utc_now())
         cutoff = now_naive - timedelta(hours=DEFAULT_DURATION_HOURS)
 
@@ -395,7 +385,6 @@ class StoryService:
 
     @staticmethod
     def get_user_stories(target_user_id: int, current_user_id: Optional[int], db: Session) -> List[StoryItemResponse]:
-        """Fetch active stories for any other specific creator/user."""
         now_naive = make_naive(utc_now())
         cutoff = now_naive - timedelta(hours=DEFAULT_DURATION_HOURS)
 
@@ -433,7 +422,6 @@ class StoryService:
         db: Session,
         music_start_time: Optional[float] = 0.0,
     ) -> StoryItemResponse:
-        """Upload single photo/video story directly to MySQL LONGTEXT as Base64 Data URL."""
         data_url, media_type = await file_to_base64_data_url(file)
 
         music_info: Dict[str, Any] = {}
@@ -492,7 +480,6 @@ class StoryService:
         db: Session,
         music_start_time: Optional[float] = 0.0,
     ) -> StoryBatchResponse:
-        """Batch upload multiple slides directly to MySQL demousertable."""
         if not files:
             raise HTTPException(status_code=400, detail="No files provided.")
 
@@ -808,8 +795,6 @@ class StoryService:
             StoryReport.user_id == current_user.id,
         ).first()
         if existing:
-            # Same behavior as mute_creator(): a repeat call is a no-op, not
-            # an error, and doesn't create a second row for the same pair.
             return {"success": True, "message": "You've already reported this story.", "story_id": story_id}
 
         combined_reason = f"{reason} - {details}" if details else reason
@@ -1014,7 +999,6 @@ class StoryService:
                     )
                 )
 
-        # Ensure any likers who don't have an explicit view row are also present in the combined viewers list
         for l in likes:
             if l.user_id not in seen_viewers:
                 seen_viewers.add(l.user_id)
@@ -1030,7 +1014,6 @@ class StoryService:
                     )
                 )
 
-        # Sort combined activity list: users who liked on top, then non-likers
         viewers_list.sort(key=lambda x: (0 if x.liked else 1))
 
         return StoryActivityResponse(
@@ -1050,7 +1033,6 @@ class StoryService:
         page: int = 1,
         page_size: int = 20,
     ):
-        """Paginated list of users who viewed a story (owner only)."""
         from app.common.schemas.story import PaginatedViewerResponse, StoryViewerItem
 
         story = db.get(Story, story_id)
@@ -1096,7 +1078,6 @@ class StoryService:
         page: int = 1,
         page_size: int = 20,
     ):
-        """Paginated list of users who liked a story (owner only)."""
         from app.common.schemas.story import PaginatedLikerResponse, StoryLikerItem
 
         story = db.get(Story, story_id)
@@ -1136,7 +1117,6 @@ class StoryService:
 
     @staticmethod
     def get_my_stats(current_user: User, db: Session):
-        """Aggregate engagement totals across all stories created by the current user."""
         from app.common.schemas.story import StoryStatsResponse
 
         now_naive = make_naive(utc_now())
@@ -1181,7 +1161,6 @@ class StoryService:
 
     @staticmethod
     def update_story(story_id: int, caption: Optional[str], audience: Optional[str], current_user: User, db: Session) -> Story:
-        """Edit caption and/or audience of an existing story (owner only)."""
         story = db.get(Story, story_id)
         if not story:
             raise HTTPException(status_code=404, detail="Story not found")
@@ -1199,7 +1178,6 @@ class StoryService:
 
     @staticmethod
     def get_archived_stories(current_user: User, db: Session):
-        """Return expired (past 30-day) stories for the authenticated user."""
         from app.common.schemas.story import StoryArchivedItem
 
         now_naive = make_naive(utc_now())
@@ -1238,9 +1216,6 @@ class StoryService:
 
     @staticmethod
     def react_to_story(story_id: int, emoji: str, current_user: User, db: Session) -> dict:
-        """Record an emoji reaction to a story (stored as a specialised like with emoji metadata).
-        Uses the StoryLike table – emoji is prepended to user_name for lightweight storage.
-        """
         from app.common.schemas.story import StoryReactResponse
 
         story = db.get(Story, story_id)
@@ -1289,7 +1264,6 @@ class StoryService:
 
     @staticmethod
     def get_my_stories_with_metrics(current_user: User, db: Session) -> list:
-        """Return all stories (active + expired last 7 days) with engagement metrics for role dashboards."""
         from app.common.schemas.story import StoryWithMetrics
 
         now_naive = make_naive(utc_now())
@@ -1338,7 +1312,6 @@ class StoryService:
 
     @staticmethod
     def get_my_story_analytics(current_user: User, db: Session) -> Dict[str, Any]:
-        """Fetch detailed Instagram-style breakdown of who viewed, liked, and replied to current user's active stories."""
         now_naive = make_naive(utc_now())
 
         stories: List[Story] = (

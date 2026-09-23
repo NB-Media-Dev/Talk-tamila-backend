@@ -56,4 +56,3 @@ class AdminReportItem(BaseModel):
     created_at: str
     story: Optional[AdminStoryItem] = None
     model_config = ConfigDict(from_attributes=True)
-

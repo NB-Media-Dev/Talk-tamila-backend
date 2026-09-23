@@ -15,7 +15,6 @@ def get_influencer_stats(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Dashboard stats for influencer: follower count, post count, etc."""
     return InfluencerService.get_dashboard_stats(current_user, db)
 
 @router.get("/stories", response_model=List[StoryWithMetrics])
@@ -23,11 +22,6 @@ def get_influencer_stories(
     current_user: User = Depends(get_current_influencer),
     db: Session = Depends(get_db),
 ) -> List[StoryWithMetrics]:
-    """Influencer-only: fetch your stories from the last 7 days with
-    full engagement metrics (views, likes, replies, shares, engagement rate).
-
-    Only accessible by users with role = influencer or admin.
-    """
     from app.common.services.story_service import StoryService
     return StoryService.get_my_stories_with_metrics(current_user, db)
 
@@ -37,6 +31,5 @@ def get_influencer_story_stats(
     current_user: User = Depends(get_current_influencer),
     db: Session = Depends(get_db),
 ) -> StoryStatsResponse:
-    """Influencer-only: aggregate story engagement stats (total views, likes, replies, shares)."""
     from app.common.services.story_service import StoryService
     return StoryService.get_my_stats(current_user, db)

@@ -71,7 +71,6 @@ class StoryItemResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
-
 class StoryGroupResponse(BaseModel):
     id: int
     user: StoryUserResponse
@@ -196,7 +195,6 @@ class StoryCreateRequest(BaseModel):
 
 
 class StoryJsonCreateRequest(StoryCreateRequest):
-    """Backwards-compatible alias for StoryCreateRequest."""
     pass
 
 
@@ -225,15 +223,12 @@ class StoryTextCreateRequest(BaseModel):
 
 
 class StoryPatchRequest(BaseModel):
-    """Edit caption and/or audience of an existing story (owner only)."""
     caption: Optional[str] = Field(default=None, max_length=2200)
     content: Optional[str] = Field(default=None, max_length=2200)
     audience: Optional[StoryAudienceEnum] = None
 
 
-
 class StoryReactRequest(BaseModel):
-    """Emoji reaction to a story (e.g. ❤️ 🔥 😂)."""
     emoji: str = Field(..., min_length=1, max_length=10)
 
 
@@ -277,7 +272,6 @@ class PaginatedLikerResponse(BaseModel):
 
 
 class StoryStatsResponse(BaseModel):
-    """Aggregate engagement stats across ALL stories owned by the current user."""
     user_id: int
     total_stories: int
     total_views: int
@@ -301,7 +295,6 @@ class StoryArchivedItem(BaseModel):
 
 
 class StoryWithMetrics(BaseModel):
-    """Story enriched with engagement metrics for role-specific dashboards."""
     story_id: int
     id: int
     media_url: str
@@ -395,5 +388,3 @@ class StoryOwnerFeedResponse(BaseModel):
     author_id: Optional[int] = None
     slides: List[SlideOwnerFeedResponse] = []
     model_config = ConfigDict(from_attributes=True)
-
-

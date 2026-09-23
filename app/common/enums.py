@@ -27,4 +27,4 @@ StoryAudience = StoryAudienceEnum
 
 class MediaTypeEnum(str, enum.Enum):
     IMAGE = "image"
-    VIDEO = "video"
+    VIDEO = "video"

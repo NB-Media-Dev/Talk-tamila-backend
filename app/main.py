@@ -110,7 +110,6 @@ async def lifespan(app: FastAPI):
 
         db = SessionLocal()
         try:
-            # Demo accounts (admin@talktamila.com / admin123 ...) are for local dev only.
             if settings.ENVIRONMENT.lower() != "production" and db.query(User).first() is None:
                 seed_db_data(db)
         finally:
@@ -264,9 +263,6 @@ login_schema_extra = {
 
 @auth_router.get("/profile", status_code=status.HTTP_200_OK)
 def get_profile(current_user: User = Depends(get_current_user)) -> dict:
-    """
-    Retrieve the profile details of the currently authenticated logged-in user.
-    """
     return {
         "id": current_user.user_id,
         "user_id": current_user.user_id,
@@ -386,8 +382,6 @@ def refresh_token(payload: RefreshRequest, db: Session = Depends(get_db)) -> dic
         "refresh_token": new_refresh,
         "token_type": "bearer",
     }
-
-
 
 
 @auth_router.post("/change-password")

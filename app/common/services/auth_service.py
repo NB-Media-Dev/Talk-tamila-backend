@@ -23,9 +23,6 @@ MAX_OTP_ATTEMPTS = 5
 
 
 def _hash_otp(otp: str) -> str:
-    """Salted hash of an OTP, so a leaked database never exposes a usable code.
-    The e-mail/SMS the user receives still has the raw 6-digit code; only what
-    is stored in reset_otp is hashed."""
     return hmac.new(settings.SECRET_KEY.encode(), otp.encode(), hashlib.sha256).hexdigest()
 
 
@@ -58,10 +55,6 @@ class AuthService:
             return None
         if not verify_password(password, user.password):
             return None
-        # Deliberately not checking is_active here: returning the user lets the
-        # /login route tell "wrong password" apart from "account suspended" and
-        # give each its own error message, instead of both looking like bad
-        # credentials.
         return user
 
     @staticmethod
@@ -72,15 +65,12 @@ class AuthService:
             user = AuthService.get_by_mobile(db, identifier)
             if user:
                 return user
-        # Not an email, and not a mobile number that matched anyone —
-        # treat it as a username.
         return AuthService.get_by_username(db, identifier)
 
     @staticmethod
     def create_otp(db: Session, identifier: str) -> None:
         user = AuthService.get_by_identifier(db, identifier)
         if not user:
-            # Don't reveal whether the account exists
             return
 
         otp = f"{secrets.randbelow(900000) + 100000}"
@@ -90,14 +80,8 @@ class AuthService:
         user.reset_otp_attempts = 0
         db.commit()
 
-        # Deliver by whichever channel the identifier actually matched: SMS
-        # only when the user typed their own mobile number, email otherwise
-        # (including when they typed their username, since there's no phone
-        # number to send to in that case).
         use_sms = "@" not in identifier and _looks_like_mobile(identifier)
 
-        # A delivery failure must not turn into a 500, otherwise the response
-        # reveals whether the account exists.
         try:
             if use_sms:
                 send_otp_sms(user.mobile_no, otp)
@@ -121,8 +105,6 @@ class AuthService:
             raise invalid
 
         if not secrets.compare_digest(user.reset_otp, _hash_otp(otp)):
-            # Limit guessing: after MAX_OTP_ATTEMPTS wrong codes the OTP is void
-            # and the user has to request a new one.
             attempts = (user.reset_otp_attempts or 0) + 1
             if attempts >= MAX_OTP_ATTEMPTS:
                 AuthService._clear_otp(db, user)
@@ -151,9 +133,6 @@ class AuthService:
         user = AuthService.get_by_identifier(db, identifier)
         if not user:
             raise HTTPException(status_code=400, detail="Invalid or expired OTP.")
-        # If verify_otp() already confirmed this exact code, don't re-check it here:
-        # re-checking would spend another one of the user's limited wrong-guess
-        # attempts for no reason, and could void a code that was already verified.
         if not (user.reset_otp_verified and user.reset_otp and user.reset_otp == _hash_otp(otp)):
             AuthService._check_otp_valid(db, user, otp)
         if not user.reset_otp_verified:

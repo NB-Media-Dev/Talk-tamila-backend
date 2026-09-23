@@ -106,4 +106,3 @@ def seed_db_data(db: Session):
 
     db.add_all([s_arjun_1, s_arjun_2, s_priya, s_karthik])
     db.commit()
-

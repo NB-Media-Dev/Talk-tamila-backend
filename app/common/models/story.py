@@ -82,7 +82,6 @@ class Story(Base):
         return not self.is_deleted
 
 
-
 class StoryView(Base):
     __tablename__ = "story_views"
     __table_args__ = (
@@ -117,7 +116,6 @@ class StoryView(Base):
     @viewer_id.setter
     def viewer_id(self, value: int) -> None:
         self.user_id = value
-
 
 
 class StoryLike(Base):

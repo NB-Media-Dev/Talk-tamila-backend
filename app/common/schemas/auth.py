@@ -26,8 +26,6 @@ class LoginRequest(BaseModel):
 
 
 class RegisterRequest(BaseModel):
-    """Everything the signup form asks for is required here too, so accounts
-    can no longer be created through the API with blank / placeholder data."""
 
     username: str = Field(..., min_length=3, max_length=100)
     email: EmailStr
@@ -144,7 +142,6 @@ class ForgotPasswordRequest(BaseModel):
                 raise ValueError("Enter a valid phone number.")
             return v
 
-        # Not shaped like an email or a phone number — treat it as a username.
         if len(v) < 3:
             raise ValueError("Enter a valid email, mobile number, or username.")
         return v
