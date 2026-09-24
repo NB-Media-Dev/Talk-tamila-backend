@@ -1,5 +1,6 @@
 import json
 from app.common.schemas.auth import ForgotPasswordRequest, VerifyOtpRequest, ResetPasswordRequest
+from app.common.services.story_service import file_to_base64_data_url
 from contextlib import asynccontextmanager
 from typing import Any, Dict, List, Optional
 
@@ -263,6 +264,49 @@ login_schema_extra = {
 
 @auth_router.get("/profile", status_code=status.HTTP_200_OK)
 def get_profile(current_user: User = Depends(get_current_user)) -> dict:
+    return {
+        "id": current_user.user_id,
+        "user_id": current_user.user_id,
+        "username": current_user.username,
+        "email": current_user.email,
+        "first_name": current_user.first_name,
+        "last_name": current_user.last_name,
+        "full_name": current_user.full_name,
+        "mobile_no": current_user.mobile_no,
+        "dob": current_user.dob.isoformat() if current_user.dob else None,
+        "role": current_user.role,
+        "avatar_url": current_user.avatar_url,
+        "bio": current_user.bio,
+        "location": current_user.location,
+        "followers_count": current_user.followers_count,
+    }
+
+@auth_router.put("/profile", status_code=status.HTTP_200_OK)
+async def update_profile(
+    first_name: Optional[str] = Form(None),
+    last_name: Optional[str] = Form(None),
+    bio: Optional[str] = Form(None),
+    location: Optional[str] = Form(None),
+    avatar: Optional[UploadFile] = File(None),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    if first_name is not None and first_name.strip():
+        current_user.first_name = first_name.strip()
+    if last_name is not None and last_name.strip():
+        current_user.last_name = last_name.strip()
+    if bio is not None:
+        current_user.bio = bio.strip()
+    if location is not None:
+        current_user.location = location.strip()
+
+    if avatar is not None:
+        data_url, _ = await file_to_base64_data_url(avatar)
+        current_user.avatar_url = data_url
+
+    db.commit()
+    db.refresh(current_user)
+
     return {
         "id": current_user.user_id,
         "user_id": current_user.user_id,

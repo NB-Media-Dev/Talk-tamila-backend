@@ -64,24 +64,37 @@ class User(Base):
     def followers_count(self) -> int:
         return self.profile.followers_count if self.profile else 0
 
+    def _ensure_profile(self) -> "Profile":
+        """Lazily create the linked Profile row the first time any profile
+        field (avatar/bio/location) is set on a user who doesn't have one yet."""
+        from app.common.models.social import Profile
+        if not self.profile:
+            self.profile = Profile(user_id=self.user_id, account_type=self.role)
+        return self.profile
+
     @property
     def avatar_url(self) -> Optional[str]:
         return self.profile.profile_pic_url if self.profile else None
 
     @avatar_url.setter
     def avatar_url(self, value: Optional[str]):
-        from app.common.models.social import Profile
-        if not self.profile:
-            self.profile = Profile(user_id=self.user_id, account_type=self.role)
-        self.profile.profile_pic_url = value
+        self._ensure_profile().profile_pic_url = value
 
     @property
     def bio(self) -> Optional[str]:
         return self.profile.bio if self.profile else None
 
+    @bio.setter
+    def bio(self, value: Optional[str]):
+        self._ensure_profile().bio = value
+
     @property
     def location(self) -> Optional[str]:
         return self.profile.location if self.profile else None
+
+    @location.setter
+    def location(self, value: Optional[str]):
+        self._ensure_profile().location = value
 
     profile: Mapped[Optional["Profile"]] = relationship("Profile", back_populates="user", uselist=False, cascade="all, delete-orphan")
     stories: Mapped[list["Story"]] = relationship("Story", back_populates="owner", cascade="all, delete-orphan")
