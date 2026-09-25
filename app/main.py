@@ -1,4 +1,8 @@
 import json
+import re
+import app.core
+from app.story.routes import router as story_router
+from app.story.settings_routes import router as story_settings_router
 from app.common.schemas.auth import ForgotPasswordRequest, VerifyOtpRequest, ResetPasswordRequest
 from app.common.services.story_service import file_to_base64_data_url
 from contextlib import asynccontextmanager
@@ -111,6 +115,8 @@ async def lifespan(app: FastAPI):
                 "ALTER TABLE story_likes ADD COLUMN user_name VARCHAR(100) NULL",
                 "ALTER TABLE story_replies ADD COLUMN sender_name VARCHAR(100) NULL",
                 "ALTER TABLE story_replies ADD COLUMN receiver_name VARCHAR(100) NULL",
+                "ALTER TABLE stories ADD COLUMN reply LONGTEXT NULL",
+                "ALTER TABLE profiles MODIFY COLUMN profile_pic_url LONGTEXT NULL",
             ]:
                 try:
                     conn.execute(text(stmt))
@@ -180,6 +186,37 @@ class RefreshRequest(BaseModel):
 class ChangePasswordPayload(BaseModel):
     old_password: str = Field(..., min_length=1)
     new_password: str = Field(..., min_length=6)
+
+
+AVATAR_ALLOWED_TYPES = {"image/jpeg", "image/png", "image/webp"}
+AVATAR_MAX_DATA_URL_CHARS = 2_800_000  # about 2 MB of image data once base64-encoded
+NAME_MAX_LENGTH = 100
+BIO_MAX_LENGTH = 300
+LOCATION_MAX_LENGTH = 100
+MOBILE_MAX_LENGTH = 20
+EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+MOBILE_RE = re.compile(r"^\+?[0-9\s\-]{7,20}$")
+
+
+def _profile_payload(user: User) -> dict:
+    return {
+        "id": user.user_id,
+        "user_id": user.user_id,
+        "username": user.username,
+        "email": user.email,
+        "first_name": user.first_name,
+        "last_name": user.last_name,
+        "full_name": user.full_name,
+        "mobile_no": user.mobile_no,
+        "dob": user.dob.isoformat() if user.dob else None,
+        "role": user.role,
+        "avatar_url": user.avatar_url,
+        "bio": user.bio,
+        "location": user.location,
+        "followers_count": user.followers_count,
+        "following_count": user.following_count,
+        "posts_count": user.posts_count,
+    }
 
 
 @auth_router.get("/check-availability", status_code=status.HTTP_200_OK)
@@ -273,22 +310,8 @@ login_schema_extra = {
 
 @auth_router.get("/profile", status_code=status.HTTP_200_OK)
 def get_profile(current_user: User = Depends(get_current_user)) -> dict:
-    return {
-        "id": current_user.user_id,
-        "user_id": current_user.user_id,
-        "username": current_user.username,
-        "email": current_user.email,
-        "first_name": current_user.first_name,
-        "last_name": current_user.last_name,
-        "full_name": current_user.full_name,
-        "mobile_no": current_user.mobile_no,
-        "dob": current_user.dob.isoformat() if current_user.dob else None,
-        "role": current_user.role,
-        "avatar_url": current_user.avatar_url,
-        "bio": current_user.bio,
-        "location": current_user.location,
-        "followers_count": current_user.followers_count,
-    }
+    return _profile_payload(current_user)
+
 
 @auth_router.put("/profile", status_code=status.HTTP_200_OK)
 async def update_profile(
@@ -296,42 +319,82 @@ async def update_profile(
     last_name: Optional[str] = Form(None),
     bio: Optional[str] = Form(None),
     location: Optional[str] = Form(None),
+    email: Optional[str] = Form(None),
+    mobile_no: Optional[str] = Form(None),
     avatar: Optional[UploadFile] = File(None),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> dict:
-    if first_name is not None and first_name.strip():
-        current_user.first_name = first_name.strip()
-    if last_name is not None and last_name.strip():
-        current_user.last_name = last_name.strip()
-    if bio is not None:
-        current_user.bio = bio.strip()
-    if location is not None:
-        current_user.location = location.strip()
+    # ---- validate everything first, so a bad request changes nothing ----
+    if first_name is not None:
+        first_name = first_name.strip()
+        if not first_name:
+            raise HTTPException(status_code=400, detail="First name cannot be empty.")
+        if len(first_name) > NAME_MAX_LENGTH:
+            raise HTTPException(status_code=400, detail=f"First name must be {NAME_MAX_LENGTH} characters or less.")
 
-    if avatar is not None:
-        data_url, _ = await file_to_base64_data_url(avatar)
-        current_user.avatar_url = data_url
+    if last_name is not None:
+        last_name = last_name.strip()
+        if len(last_name) > NAME_MAX_LENGTH:
+            raise HTTPException(status_code=400, detail=f"Last name must be {NAME_MAX_LENGTH} characters or less.")
+
+    if bio is not None:
+        bio = bio.strip()
+        if len(bio) > BIO_MAX_LENGTH:
+            raise HTTPException(status_code=400, detail=f"Bio must be {BIO_MAX_LENGTH} characters or less.")
+
+    if location is not None:
+        location = location.strip()
+        if len(location) > LOCATION_MAX_LENGTH:
+            raise HTTPException(status_code=400, detail=f"Location must be {LOCATION_MAX_LENGTH} characters or less.")
+
+    if email is not None:
+        email = email.strip().lower()
+        if not email or not EMAIL_RE.match(email):
+            raise HTTPException(status_code=400, detail="Please enter a valid email address.")
+        existing = AuthService.get_by_email(db, email)
+        if existing is not None and existing.user_id != current_user.user_id:
+            raise HTTPException(status_code=400, detail="This email is already registered.")
+
+    if mobile_no is not None:
+        mobile_no = mobile_no.strip()
+        if not mobile_no or not MOBILE_RE.match(mobile_no):
+            raise HTTPException(status_code=400, detail="Please enter a valid phone number.")
+        if len(mobile_no) > MOBILE_MAX_LENGTH:
+            raise HTTPException(status_code=400, detail=f"Phone number must be {MOBILE_MAX_LENGTH} characters or less.")
+        existing = AuthService.get_by_mobile(db, mobile_no)
+        if existing is not None and existing.user_id != current_user.user_id:
+            raise HTTPException(status_code=400, detail="This phone number is already registered.")
+
+    avatar_data_url: Optional[str] = None
+    if avatar is not None and avatar.filename:
+        if avatar.content_type not in AVATAR_ALLOWED_TYPES:
+            raise HTTPException(status_code=400, detail="Avatar must be a JPG, PNG or WEBP image.")
+        avatar_data_url, _ = await file_to_base64_data_url(avatar)
+        if len(avatar_data_url) > AVATAR_MAX_DATA_URL_CHARS:
+            raise HTTPException(status_code=400, detail="Avatar must be 2 MB or smaller.")
+
+    # ---- apply ----
+    if first_name is not None:
+        current_user.first_name = first_name
+    if last_name is not None:
+        current_user.last_name = last_name
+    if bio is not None:
+        current_user.bio = bio
+    if location is not None:
+        current_user.location = location
+    if email is not None:
+        current_user.email = email
+    if mobile_no is not None:
+        current_user.mobile_no = mobile_no
+    if avatar_data_url is not None:
+        current_user.avatar_url = avatar_data_url
 
     db.commit()
     db.refresh(current_user)
 
-    return {
-        "id": current_user.user_id,
-        "user_id": current_user.user_id,
-        "username": current_user.username,
-        "email": current_user.email,
-        "first_name": current_user.first_name,
-        "last_name": current_user.last_name,
-        "full_name": current_user.full_name,
-        "mobile_no": current_user.mobile_no,
-        "dob": current_user.dob.isoformat() if current_user.dob else None,
-        "role": current_user.role,
-        "avatar_url": current_user.avatar_url,
-        "bio": current_user.bio,
-        "location": current_user.location,
-        "followers_count": current_user.followers_count,
-    }
+    return _profile_payload(current_user)
+
 
 @auth_router.post("/login", openapi_extra=login_schema_extra, status_code=status.HTTP_200_OK)
 async def login(request: Request, db: Session = Depends(get_db)) -> dict:
@@ -469,6 +532,7 @@ def reset_password_endpoint(payload: ResetPasswordRequest, db: Session = Depends
 routers = [
     auth_router,
     story_router,
+    story_settings_router,
     admin_router,
     influencer_router,
     freelancer_router,

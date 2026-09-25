@@ -36,12 +36,13 @@ class Settings(BaseSettings):
 
     BACKEND_CORS_ORIGINS: Union[str, List[str]] = [
         "http://localhost:3000",
-        "http://192.168.0.72:3000",
+        "http://127.0.0.1:3000",
+        "http://192.168.0.45:3000",
         "http://localhost:5173",
         "https://talktamila-adminpanel-s8pg.vercel.app",
     ]
 
-    CORS_ORIGIN_REGEX: str = ""
+    CORS_ORIGIN_REGEX: str = r"^http://(localhost|127\.0\.0\.1|192\.168\.\d{1,3}\.\d{1,3}|10\.\d{1,3}\.\d{1,3}\.\d{1,3}):\d+$"
 
     @field_validator("BACKEND_CORS_ORIGINS", mode="after")
     @classmethod

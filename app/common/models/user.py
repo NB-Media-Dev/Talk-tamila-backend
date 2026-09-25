@@ -64,6 +64,14 @@ class User(Base):
     def followers_count(self) -> int:
         return self.profile.followers_count if self.profile else 0
 
+    @property
+    def following_count(self) -> int:
+        return self.profile.following_count if self.profile else 0
+
+    @property
+    def posts_count(self) -> int:
+        return self.profile.posts_count if self.profile else 0
+
     def _ensure_profile(self) -> "Profile":
         """Lazily create the linked Profile row the first time any profile
         field (avatar/bio/location) is set on a user who doesn't have one yet."""
