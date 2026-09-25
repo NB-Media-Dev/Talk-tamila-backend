@@ -1176,6 +1176,7 @@ class StoryService:
                 liked_by_me = True
             if l.user_id not in liked_user_ids:
                 liked_user_ids.add(l.user_id)
+                u = l.user
                 liker_name = l.likes_by or (u.username if u else (l.user_name or f"user_{l.user_id}"))
                 likers_list.append(
                     ActivityLiker(
