@@ -42,14 +42,15 @@ def seed_db_data(db: Session):
         created_users[uname] = u
 
     db.flush()
-
     for uname, u in created_users.items():
         prof = Profile(
             user_id=u.user_id,
             account_type=u.role,
-            bio=f"Hey, I am {uname} on Talk Tamila! ✨",
-            followers_count=350,
-            profile_pic_url="https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150",
+            followers_count=0,
+            following_count=0,
+            posts_count=0,
+            bio=None,
+            profile_pic_url=None,
         )
         db.add(prof)
 

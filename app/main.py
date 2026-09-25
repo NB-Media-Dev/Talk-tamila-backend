@@ -307,10 +307,23 @@ login_schema_extra = {
     }
 }
 
-
 @auth_router.get("/profile", status_code=status.HTTP_200_OK)
-def get_profile(current_user: User = Depends(get_current_user)) -> dict:
-    return _profile_payload(current_user)
+def get_profile(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    from app.common.models.social import Follow
+    from app.common.models.story import Story
+
+    live_followers = db.query(Follow).filter(Follow.following_id == current_user.user_id).count()
+    live_following = db.query(Follow).filter(Follow.follower_id == current_user.user_id).count()
+    live_posts = db.query(Story).filter(Story.user_id == current_user.user_id).count()
+
+    payload = _profile_payload(current_user)
+    payload["followers_count"] = live_followers
+    payload["following_count"] = live_following
+    payload["posts_count"] = live_posts
+    return payload
 
 
 @auth_router.put("/profile", status_code=status.HTTP_200_OK)
