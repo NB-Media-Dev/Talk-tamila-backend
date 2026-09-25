@@ -102,6 +102,15 @@ async def lifespan(app: FastAPI):
                 "ALTER TABLE users ADD COLUMN reset_otp_attempts INT NOT NULL DEFAULT 0",
                 "ALTER TABLE users MODIFY COLUMN reset_otp VARCHAR(64) NULL",
                 "ALTER TABLE users ADD COLUMN is_active BOOLEAN NOT NULL DEFAULT TRUE",
+                "ALTER TABLE stories ADD COLUMN username VARCHAR(100) NULL",
+                "ALTER TABLE stories ADD COLUMN is_deleted BOOLEAN NOT NULL DEFAULT FALSE",
+                "ALTER TABLE stories ADD COLUMN deleted_at DATETIME NULL",
+                "ALTER TABLE story_views ADD COLUMN story_sender VARCHAR(100) NULL",
+                "ALTER TABLE story_views ADD COLUMN viewed_by VARCHAR(100) NULL",
+                "ALTER TABLE story_likes ADD COLUMN liked_by VARCHAR(100) NULL",
+                "ALTER TABLE story_likes ADD COLUMN user_name VARCHAR(100) NULL",
+                "ALTER TABLE story_replies ADD COLUMN sender_name VARCHAR(100) NULL",
+                "ALTER TABLE story_replies ADD COLUMN receiver_name VARCHAR(100) NULL",
             ]:
                 try:
                     conn.execute(text(stmt))

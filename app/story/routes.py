@@ -232,6 +232,7 @@ def create_text_story(
 
     story = Story(
         user_id=current_user.id,
+        username=current_user.username,
         media_url=media_url,
         media_type="text",
         caption=payload.caption,

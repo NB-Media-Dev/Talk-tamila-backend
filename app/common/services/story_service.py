@@ -220,6 +220,7 @@ def build_story_item(
         shares_count=shares_count,
         viewed_by_me=viewed_by_me,
         liked_by_me=liked_by_me,
+        username=story.owner.username if story.owner else f"user_{story.user_id}",
         user=owner_data,
     )
 
@@ -251,6 +252,75 @@ def story_to_slide(story_item: StoryItemResponse, creator_name: str) -> StorySli
 
 
 class StoryService:
+    @staticmethod
+    def create_story(payload, current_user: User, db: Session) -> StoryItemResponse:
+        """Create a story from a JSON payload (media_url or gradient already provided)."""
+        media_url = getattr(payload, "media_url", None)
+        caption = getattr(payload, "caption", None) or getattr(payload, "content", None)
+        
+        if not media_url:
+            if caption:
+                media_url = "gradient:insta"
+            else:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Either media_url or caption/content is required to create a story.",
+                )
+
+        media_type = (getattr(payload, "media_type", "image") or "image").strip().lower()
+        if media_type not in ("image", "video", "text"):
+            media_type = "image"
+
+        duration_hours = getattr(payload, "duration_hours", DEFAULT_DURATION_HOURS) or DEFAULT_DURATION_HOURS
+        now_naive = make_naive(utc_now())
+        expires_naive = now_naive + timedelta(hours=duration_hours)
+
+        music_id = getattr(payload, "music_id", None)
+        music_title = getattr(payload, "music_title", None)
+        music_artist = getattr(payload, "music_artist", None)
+        music_url = getattr(payload, "music_url", None)
+        music_thumbnail = getattr(payload, "music_thumbnail", None)
+        music_duration = getattr(payload, "music_duration", 60.0) or 60.0
+        music_start_time = getattr(payload, "music_start_time", 0.0) or 0.0
+
+        resolved_music_id = None
+        if music_id or music_title or music_url:
+            resolved_music_id = MusicService.resolve_or_create_music_track(
+                db=db,
+                music_id=music_id,
+                music_title=music_title,
+                music_artist=music_artist,
+                music_url=music_url,
+                music_thumbnail=music_thumbnail,
+                music_duration=music_duration,
+            )
+
+        aud = getattr(payload, "audience", "PUBLIC")
+        audience_val = aud.value if hasattr(aud, "value") else str(aud)
+
+        story = Story(
+            user_id=current_user.id,
+            username=current_user.username,
+            media_url=media_url,
+            media_type=media_type,
+            caption=caption,
+            audience=audience_val.upper() if audience_val else "PUBLIC",
+            created_at=now_naive,
+            expires_at=expires_naive,
+            music_id=resolved_music_id,
+            music_title=music_title,
+            music_artist=music_artist,
+            music_url=music_url,
+            music_thumbnail=music_thumbnail,
+            music_duration=music_duration,
+            music_start_time=max(0.0, float(music_start_time)),
+        )
+        db.add(story)
+        db.commit()
+        db.refresh(story)
+        logger.info("Story %s created via JSON by user %s", story.story_id, current_user.id)
+        return build_story_item(story, current_user.id, db)
+
     @staticmethod
     def list_active_groups(
         current_user: Optional[User],
@@ -339,7 +409,8 @@ class StoryService:
                 StoryGroupResponse(
                     id=uid,
                     user=data["user"],
-                    userName=data["user"].userName,
+                    userName=creator_name,
+                    username=creator_name,
                     avatar=data["user"].avatar,
                     verified=data["user"].verified,
                     role=data["user"].role,
@@ -450,6 +521,7 @@ class StoryService:
 
         story = Story(
             user_id=current_user.id,
+            username=current_user.username,
             media_url=data_url,
             media_type=media_type,
             caption=caption,
@@ -525,6 +597,7 @@ class StoryService:
 
             story = Story(
                 user_id=current_user.id,
+                username=current_user.username,
                 media_url=data_url,
                 media_type=media_type,
                 caption=item_caption,
@@ -565,15 +638,35 @@ class StoryService:
             .filter(StoryView.story_id == story_id, StoryView.user_id == current_user.id)
             .first()
         )
+        # Resolve story sender / creator username
+        sender_name = None
+        if story.user_id:
+            story_owner = db.get(User, story.user_id)
+            if story_owner:
+                sender_name = story_owner.username
+        if not sender_name:
+            sender_name = getattr(story, "username", None) or (story.owner.username if story.owner else None)
+
         if not existing:
             view = StoryView(
                 story_id=story_id,
                 user_id=current_user.id,
-                user_name=current_user.username,
+                story_sender=sender_name,
+                viewed_by=current_user.username,
                 viewed_at=make_naive(utc_now()),
             )
             db.add(view)
             db.commit()
+        else:
+            updated = False
+            if (not existing.story_sender or existing.story_sender != sender_name) and sender_name:
+                existing.story_sender = sender_name
+                updated = True
+            if not existing.viewed_by or existing.viewed_by != current_user.username:
+                existing.viewed_by = current_user.username
+                updated = True
+            if updated:
+                db.commit()
 
         views_count = (
             db.query(func.count(func.distinct(StoryView.user_id)))
@@ -588,6 +681,15 @@ class StoryService:
         if not story:
             raise HTTPException(status_code=404, detail="Story not found")
 
+        # Resolve story owner / uploader username
+        owner_name = None
+        if story.user_id:
+            story_owner = db.get(User, story.user_id)
+            if story_owner:
+                owner_name = story_owner.username
+        if not owner_name:
+            owner_name = getattr(story, "username", None) or (story.owner.username if story.owner else None)
+
         existing = (
             db.query(StoryLike)
             .filter(StoryLike.story_id == story_id, StoryLike.user_id == current_user.id)
@@ -597,11 +699,22 @@ class StoryService:
             like = StoryLike(
                 story_id=story_id,
                 user_id=current_user.id,
-                user_name=current_user.username,
+                user_name=owner_name,
+                liked_by=current_user.username,
                 liked_at=make_naive(utc_now()),
             )
             db.add(like)
             db.commit()
+        else:
+            updated = False
+            if (not existing.user_name or existing.user_name != owner_name) and owner_name:
+                existing.user_name = owner_name
+                updated = True
+            if not existing.liked_by or existing.liked_by != current_user.username:
+                existing.liked_by = current_user.username
+                updated = True
+            if updated:
+                db.commit()
 
             if story.user_id != current_user.id:
                 try:
@@ -682,10 +795,22 @@ class StoryService:
         if not story:
             raise HTTPException(status_code=404, detail="Story not found")
 
+        # Directly resolve story owner / receiver username
+        receiver_name = None
+        if story.user_id:
+            story_owner = db.get(User, story.user_id)
+            if story_owner:
+                receiver_name = story_owner.username
+        if not receiver_name:
+            receiver_name = getattr(story, "username", None) or (story.owner.username if story.owner else None)
+
+        sender_name = current_user.username
+
         reply = StoryReply(
             story_id=story_id,
             user_id=current_user.id,
-            user_name=current_user.username,
+            sender_name=sender_name,
+            receiver_name=receiver_name,
             text=text,
             created_at=make_naive(utc_now()),
         )
@@ -712,6 +837,8 @@ class StoryService:
             "success": True,
             "message": "Reply sent successfully",
             "reply_id": reply.reply_id,
+            "sender_name": reply.sender_name,
+            "receiver_name": reply.receiver_name,
             "text": reply.text,
             "created_at": format_iso(reply.created_at) or utc_now().isoformat(),
         }
@@ -732,7 +859,9 @@ class StoryService:
                 user_id=r.user_id,
                 text=r.text,
                 created_at=format_iso(r.created_at) or utc_now().isoformat(),
-                username=r.user.username if r.user else f"user_{r.user_id}",
+                username=r.sender_name or (r.user.username if r.user else f"user_{r.user_id}"),
+                sender_name=r.sender_name or (r.user.username if r.user else f"user_{r.user_id}"),
+                receiver_name=r.receiver_name,
                 avatar_url=r.user.avatar_url if r.user else None,
             )
             for r in replies
@@ -964,13 +1093,13 @@ class StoryService:
                 liked_by_me = True
             if l.user_id not in liked_user_ids:
                 liked_user_ids.add(l.user_id)
-                u = l.user
+                liker_name = l.likes_by or (u.username if u else (l.user_name or f"user_{l.user_id}"))
                 likers_list.append(
                     ActivityLiker(
                         user_id=l.user_id,
-                        username=u.username if u else (l.user_name or f"user_{l.user_id}"),
+                        username=liker_name,
                         avatar_url=u.avatar_url if u else None,
-                        full_name=u.full_name if u else (l.user_name or f"User {l.user_id}"),
+                        full_name=u.full_name if u else (liker_name or f"User {l.user_id}"),
                     )
                 )
 
@@ -988,12 +1117,13 @@ class StoryService:
                 seen_viewers.add(v.user_id)
                 u = v.user
                 is_liked = v.user_id in liked_user_ids
+                viewer_name = v.viewed_by or (u.username if u else f"user_{v.user_id}")
                 viewers_list.append(
                     ActivityViewer(
                         user_id=v.user_id,
-                        username=u.username if u else (v.user_name or f"user_{v.user_id}"),
+                        username=viewer_name,
                         avatar_url=u.avatar_url if u else None,
-                        full_name=u.full_name if u else (v.user_name or f"User {v.user_id}"),
+                        full_name=u.full_name if u else (viewer_name or f"User {v.user_id}"),
                         viewed_at=format_iso(v.viewed_at) or utc_now().isoformat(),
                         liked=is_liked,
                     )
@@ -1055,7 +1185,9 @@ class StoryService:
         items = [
             StoryViewerItem(
                 user_id=v.user_id,
-                username=v.user.username if v.user else f"user_{v.user_id}",
+                viewed_by=v.viewed_by or (v.user.username if v.user else f"user_{v.user_id}"),
+                username=v.viewed_by or (v.user.username if v.user else f"user_{v.user_id}"),
+                story_sender=v.story_sender,
                 full_name=v.user.full_name if v.user else None,
                 avatar_url=v.user.avatar_url if v.user else None,
                 viewed_at=format_iso(v.viewed_at) or utc_now().isoformat(),
@@ -1100,7 +1232,9 @@ class StoryService:
         items = [
             StoryLikerItem(
                 user_id=lk.user_id,
-                username=lk.user.username if lk.user else (lk.user_name or f"user_{lk.user_id}"),
+                liked_by=lk.likes_by or (lk.user.username if lk.user else (lk.user_name or f"user_{lk.user_id}")),
+                likes_by=lk.likes_by or (lk.user.username if lk.user else (lk.user_name or f"user_{lk.user_id}")),
+                username=lk.likes_by or (lk.user.username if lk.user else (lk.user_name or f"user_{lk.user_id}")),
                 full_name=lk.user.full_name if lk.user else None,
                 avatar_url=lk.user.avatar_url if lk.user else None,
                 liked_at=format_iso(lk.liked_at) or utc_now().isoformat(),
@@ -1222,13 +1356,21 @@ class StoryService:
         if not story:
             raise HTTPException(status_code=404, detail="Story not found")
 
+        # Resolve story owner / uploader username
+        owner_name = None
+        if story.user_id:
+            story_owner = db.get(User, story.user_id)
+            if story_owner:
+                owner_name = story_owner.username
+        if not owner_name:
+            owner_name = getattr(story, "username", None) or (story.owner.username if story.owner else None)
+
         tag = f"react:{emoji}"
         existing = (
             db.query(StoryLike)
             .filter(
                 StoryLike.story_id == story_id,
                 StoryLike.user_id == current_user.id,
-                StoryLike.user_name == tag,
             )
             .first()
         )
@@ -1236,10 +1378,16 @@ class StoryService:
             like = StoryLike(
                 story_id=story_id,
                 user_id=current_user.id,
-                user_name=tag,
+                user_name=owner_name,
+                liked_by=current_user.username,
                 liked_at=make_naive(utc_now()),
             )
             db.add(like)
+        else:
+            if (not existing.user_name or existing.user_name != owner_name) and owner_name:
+                existing.user_name = owner_name
+            if not existing.liked_by or existing.liked_by != current_user.username:
+                existing.liked_by = current_user.username
             if story.user_id != current_user.id:
                 try:
                     notif = Notification(

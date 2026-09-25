@@ -67,14 +67,17 @@ class StoryItemResponse(BaseModel):
     shares_count: int = 0
     viewed_by_me: bool = False
     liked_by_me: bool = False
+    username: Optional[str] = None
     user: Optional[StoryUserResponse] = None
     model_config = ConfigDict(from_attributes=True)
+
 
 
 class StoryGroupResponse(BaseModel):
     id: int
     user: StoryUserResponse
-    userName: str
+    userName: Optional[str] = None
+    username: Optional[str] = None
     avatar: Optional[str] = None
     verified: bool = True
     role: str = "influencer"
@@ -91,6 +94,17 @@ class StoryGroupResponse(BaseModel):
     media_url: Optional[str] = None
     story_id: Optional[int] = None
     model_config = ConfigDict(from_attributes=True)
+
+    @model_validator(mode="after")
+    def sync_usernames(self):
+        if not self.userName and self.username:
+            self.userName = self.username
+        elif not self.username and self.userName:
+            self.username = self.userName
+        elif not self.userName and self.user:
+            self.userName = self.user.userName
+            self.username = self.user.username
+        return self
 
 
 class StoryBatchResponse(BaseModel):
@@ -136,6 +150,8 @@ class StoryReplyResponse(BaseModel):
     text: str
     created_at: str
     username: Optional[str] = None
+    sender_name: Optional[str] = None
+    receiver_name: Optional[str] = None
     avatar_url: Optional[str] = None
 
 
@@ -241,18 +257,45 @@ class StoryReactResponse(BaseModel):
 
 class StoryViewerItem(BaseModel):
     user_id: int
-    username: str
+    username: Optional[str] = None
+    viewed_by: Optional[str] = None
+    story_sender: Optional[str] = None
     full_name: Optional[str] = None
     avatar_url: Optional[str] = None
     viewed_at: str
 
+    @model_validator(mode="after")
+    def sync_viewer_names(self):
+        if not self.username and self.viewed_by:
+            self.username = self.viewed_by
+        elif not self.viewed_by and self.username:
+            self.viewed_by = self.username
+        return self
+
 
 class StoryLikerItem(BaseModel):
     user_id: int
-    username: str
+    liked_by: str
+    user_name: Optional[str] = None
+    likes_by: Optional[str] = None
+    username: Optional[str] = None
     full_name: Optional[str] = None
     avatar_url: Optional[str] = None
     liked_at: str
+
+    @model_validator(mode="after")
+    def populate_aliases(self) -> "StoryLikerItem":
+        val = self.liked_by or self.user_name or self.username or self.likes_by
+        if val:
+            if not self.liked_by:
+                self.liked_by = val
+            if not self.user_name:
+                self.user_name = val
+            if not self.username:
+                self.username = val
+            if not self.likes_by:
+                self.likes_by = val
+        return self
 
 
 class PaginatedViewerResponse(BaseModel):

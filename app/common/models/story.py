@@ -1,13 +1,11 @@
 from datetime import datetime
-from typing import Optional
+from typing import Optional, TYPE_CHECKING
 from sqlalchemy import (
     Boolean,
     DateTime,
-    Enum,
     Float,
     ForeignKey,
     Integer,
-    Numeric,
     String,
     Text,
     UniqueConstraint,
@@ -17,6 +15,9 @@ from sqlalchemy.dialects.mysql import LONGTEXT
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
+
+if TYPE_CHECKING:
+    from app.common.models.user import User
 
 
 class Story(Base):
@@ -29,11 +30,7 @@ class Story(Base):
         index=True,
     )
     media_url: Mapped[str] = mapped_column(Text().with_variant(LONGTEXT, "mysql"), nullable=False)
-    media_type: Mapped[str] = mapped_column(
-        String(20),
-        default="image",
-        nullable=False,
-    )
+    media_type: Mapped[str] = mapped_column(String(20), default="image", nullable=False)
     caption: Mapped[str | None] = mapped_column(Text().with_variant(LONGTEXT, "mysql"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), index=True)
     expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
@@ -46,9 +43,10 @@ class Story(Base):
     music_thumbnail: Mapped[str | None] = mapped_column(Text, nullable=True)
     music_start_time: Mapped[float | None] = mapped_column(Float, default=0.0, nullable=True)
     music_duration: Mapped[float | None] = mapped_column(Float, default=60.0, nullable=True)
-
     is_deleted: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    # Matches: ALTER TABLE stories ADD COLUMN username VARCHAR(100) NULL;
+    username: Mapped[str | None] = mapped_column(String(100), nullable=True)
 
     owner: Mapped["User"] = relationship("User", back_populates="stories")
     views: Mapped[list["StoryView"]] = relationship("StoryView", back_populates="story", cascade="all, delete-orphan")
@@ -84,14 +82,12 @@ class Story(Base):
 
 class StoryView(Base):
     __tablename__ = "story_views"
-    __table_args__ = (
-        UniqueConstraint("story_id", "user_id", name="uq_story_views_story_user"),
-    )
 
     view_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     story_id: Mapped[int] = mapped_column(ForeignKey("stories.story_id", ondelete="CASCADE"), nullable=False, index=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.user_id", ondelete="CASCADE"), nullable=False, index=True)
-    user_name: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    story_sender: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    viewed_by: Mapped[str | None] = mapped_column(String(100), nullable=True)
     viewed_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
     story: Mapped["Story"] = relationship("Story", back_populates="views")
@@ -117,6 +113,22 @@ class StoryView(Base):
     def viewer_id(self, value: int) -> None:
         self.user_id = value
 
+    @property
+    def username(self) -> Optional[str]:
+        return self.viewed_by
+
+    @username.setter
+    def username(self, value: Optional[str]) -> None:
+        self.viewed_by = value
+
+    @property
+    def user_name(self) -> Optional[str]:
+        return self.viewed_by
+
+    @user_name.setter
+    def user_name(self, value: Optional[str]) -> None:
+        self.viewed_by = value
+
 
 class StoryLike(Base):
     __tablename__ = "story_likes"
@@ -128,10 +140,27 @@ class StoryLike(Base):
     story_id: Mapped[int] = mapped_column(ForeignKey("stories.story_id", ondelete="CASCADE"), nullable=False)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.user_id", ondelete="CASCADE"), nullable=False)
     user_name: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    liked_by: Mapped[str | None] = mapped_column(String(100), nullable=True)
     liked_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
     story: Mapped["Story"] = relationship("Story", back_populates="likes")
     user: Mapped["User"] = relationship("User")
+
+    @property
+    def username(self) -> Optional[str]:
+        return self.liked_by
+
+    @username.setter
+    def username(self, value: Optional[str]) -> None:
+        self.liked_by = value
+
+    @property
+    def likes_by(self) -> Optional[str]:
+        return self.liked_by
+
+    @likes_by.setter
+    def likes_by(self, value: Optional[str]) -> None:
+        self.liked_by = value
 
 
 class StoryReply(Base):
@@ -140,12 +169,29 @@ class StoryReply(Base):
     reply_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     story_id: Mapped[int] = mapped_column(ForeignKey("stories.story_id", ondelete="CASCADE"), nullable=False)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.user_id", ondelete="CASCADE"), nullable=False)
-    user_name: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    sender_name: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    receiver_name: Mapped[str | None] = mapped_column(String(100), nullable=True)
     text: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
     story: Mapped["Story"] = relationship("Story", back_populates="replies")
     user: Mapped["User"] = relationship("User")
+
+    @property
+    def user_name(self) -> Optional[str]:
+        return self.sender_name
+
+    @user_name.setter
+    def user_name(self, value: Optional[str]) -> None:
+        self.sender_name = value
+
+    @property
+    def recevier_name(self) -> Optional[str]:
+        return self.receiver_name
+
+    @recevier_name.setter
+    def recevier_name(self, value: Optional[str]) -> None:
+        self.receiver_name = value
 
 
 class StoryShare(Base):
@@ -163,9 +209,6 @@ class StoryShare(Base):
 
 class StoryReport(Base):
     __tablename__ = "story_reports"
-    __table_args__ = (
-        UniqueConstraint("story_id", "user_id", name="uq_story_reports_story_user"),
-    )
 
     report_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     story_id: Mapped[int] = mapped_column(ForeignKey("stories.story_id", ondelete="CASCADE"), nullable=False)
