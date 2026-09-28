@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 from sqlalchemy import (
     Boolean,
     DateTime,
@@ -18,6 +18,9 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
 
+if TYPE_CHECKING:
+    from app.common.models.user import User
+
 
 class Profile(Base):
     __tablename__ = "profiles"
@@ -28,6 +31,7 @@ class Profile(Base):
         unique=True,
         nullable=False,
     )
+    username: Mapped[str | None] = mapped_column(String(100), nullable=True)
     # Avatars are stored as base64 data URLs, so this must be LONGTEXT, not VARCHAR(500).
     profile_pic_url: Mapped[str | None] = mapped_column(
         Text().with_variant(mysql.LONGTEXT(), "mysql"), nullable=True

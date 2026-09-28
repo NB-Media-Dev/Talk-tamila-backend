@@ -67,16 +67,8 @@ def list_active_stories(
 ) -> List[StoryGroupResponse]:
     return StoryService.list_active_groups(current_user, db, role_filter=role)
 
-@router.get("/profile", response_model=List[StoryItemResponse])
-def get_my_active_stories(
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-) -> List[StoryItemResponse]:
-    return StoryService.get_my_stories(current_user, db)
-
-
 @router.get("/my", response_model=List[StoryItemResponse])
-def get_my_stories_alias(
+def get_my_stories(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> List[StoryItemResponse]:

@@ -118,6 +118,7 @@ async def lifespan(app: FastAPI):
                 "ALTER TABLE follows ADD COLUMN user_name VARCHAR(100) NULL",
                 "ALTER TABLE stories ADD COLUMN reply LONGTEXT NULL",
                 "ALTER TABLE profiles MODIFY COLUMN profile_pic_url LONGTEXT NULL",
+                "ALTER TABLE profiles ADD COLUMN username VARCHAR(100) NULL",
             ]:
                 try:
                     conn.execute(text(stmt))
@@ -428,6 +429,8 @@ async def update_profile(
     if username is not None and username != current_user.username:
         uid = current_user.user_id
         current_user.username = username
+        if current_user.profile is not None:
+            current_user.profile.username = username
 
         # The story tables keep copies of the username as text, so update those too.
         my_story_ids = select(Story.story_id).where(Story.user_id == uid)

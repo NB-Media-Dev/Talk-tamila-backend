@@ -265,6 +265,7 @@ class AuthService:
         profile = Profile(
             user_id=new_user.user_id,
             account_type=new_user.role,
+            username=new_user.username,
         )
         db.add(profile)
         db.commit()

@@ -77,7 +77,9 @@ class User(Base):
         field (avatar/bio/location) is set on a user who doesn't have one yet."""
         from app.common.models.social import Profile
         if not self.profile:
-            self.profile = Profile(user_id=self.user_id, account_type=self.role)
+            self.profile = Profile(user_id=self.user_id, account_type=self.role, username=self.username)
+        elif not self.profile.username and self.username:
+            self.profile.username = self.username
         return self.profile
 
     @property

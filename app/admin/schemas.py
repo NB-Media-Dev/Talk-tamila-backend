@@ -3,15 +3,6 @@ from pydantic import BaseModel, ConfigDict
 from app.common.schemas.story import StoryUserResponse
 
 
-class AdminOverview(BaseModel):
-    total_users: int = 0
-    total_stories: int = 0
-    active_stories: int = 0
-    total_views: int = 0
-    total_likes: int = 0
-    total_reports: int = 0
-
-
 class AdminPlatformStoryStats(BaseModel):
     total_stories: int = 0
     active_stories: int = 0

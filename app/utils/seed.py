@@ -45,6 +45,7 @@ def seed_db_data(db: Session):
     for uname, u in created_users.items():
         prof = Profile(
             user_id=u.user_id,
+            username=u.username,
             account_type=u.role,
             followers_count=0,
             following_count=0,

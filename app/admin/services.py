@@ -14,7 +14,6 @@ from app.common.models.story import (
     StoryReport,
 )
 from app.admin.schemas import (
-    AdminOverview,
     AdminPlatformStoryStats,
     AdminStoryItem,
     AdminReportItem,
@@ -35,33 +34,6 @@ def _format_iso(dt: Optional[datetime]) -> str:
 
 
 class AdminService:
-    @staticmethod
-    def get_overview(db: Session) -> AdminOverview:
-        now_naive = _utc_now_naive()
-        total_users = db.query(func.count(User.user_id)).scalar() or 0
-        total_stories = db.query(func.count(Story.story_id)).scalar() or 0
-        active_stories = (
-            db.query(func.count(Story.story_id))
-            .filter(
-                Story.is_deleted == False,
-                Story.expires_at > now_naive,
-            )
-            .scalar()
-            or 0
-        )
-        total_views = db.query(func.count(StoryView.view_id)).scalar() or 0
-        total_likes = db.query(func.count(StoryLike.story_likes_id)).scalar() or 0
-        total_reports = db.query(func.count(StoryReport.report_id)).scalar() or 0
-
-        return AdminOverview(
-            total_users=total_users,
-            total_stories=total_stories,
-            active_stories=active_stories,
-            total_views=total_views,
-            total_likes=total_likes,
-            total_reports=total_reports,
-        )
-
     @staticmethod
     def get_platform_story_stats(db: Session) -> AdminPlatformStoryStats:
         now_naive = _utc_now_naive()

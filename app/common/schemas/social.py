@@ -5,6 +5,7 @@ from pydantic import BaseModel, ConfigDict
 class ProfileResponse(BaseModel):
     profile_id: int
     user_id: int
+    username: Optional[str] = None
     profile_pic_url: Optional[str] = None
     bio: Optional[str] = None
     location: Optional[str] = None
