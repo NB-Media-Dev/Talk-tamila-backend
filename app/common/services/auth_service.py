@@ -89,6 +89,65 @@ class AuthService:
                 send_otp_email(user.email, otp)
         except Exception:
             logger.exception("Failed to deliver password-reset OTP")
+            AuthService._clear_otp(db, user)
+            raise HTTPException(
+                status_code=503,
+                detail="We couldn't send the email right now. Please try again in a moment.",
+            )
+
+    @staticmethod
+    def _mask_email(email: str) -> str:
+        name, _, domain = email.partition("@")
+        return f"{name[:2]}{'*' * max(len(name) - 2, 1)}@{domain}"
+
+    @staticmethod
+    def send_change_password_otp(db: Session, user: User) -> str:
+        """Email a 6-digit code to the user's registered address. Returns the masked address."""
+        # Throttle: the code's issue time is expiry minus 10 minutes.
+        expires = user.reset_otp_expires
+        if expires:
+            if expires.tzinfo is None:
+                expires = expires.replace(tzinfo=timezone.utc)
+            issued = expires - timedelta(minutes=10)
+            wait = 30 - (datetime.now(timezone.utc) - issued).total_seconds()
+            if wait > 0:
+                raise HTTPException(
+                    status_code=429,
+                    detail=f"Please wait {int(wait) + 1} seconds before requesting another code.",
+                )
+
+        otp = f"{secrets.randbelow(900000) + 100000}"
+        user.reset_otp = _hash_otp(otp)
+        user.reset_otp_expires = datetime.now(timezone.utc) + timedelta(minutes=10)
+        user.reset_otp_verified = False
+        user.reset_otp_attempts = 0
+        db.commit()
+
+        try:
+            send_otp_email(user.email, otp)
+        except Exception:
+            logger.exception("Failed to deliver change-password OTP")
+            AuthService._clear_otp(db, user)
+            raise HTTPException(
+                status_code=503,
+                detail="We couldn't send the email right now. Please try again in a moment.",
+            )
+        return AuthService._mask_email(user.email)
+
+    @staticmethod
+    def change_password_with_otp(
+        db: Session, user: User, old_password: str, otp: str, new_password: str
+    ) -> None:
+        # Check the current password first so a typo there doesn't burn OTP attempts.
+        if not verify_password(old_password, user.password):
+            raise HTTPException(status_code=400, detail="Current password incorrect.")
+        AuthService._check_otp_valid(db, user, otp)
+        if verify_password(new_password, user.password):
+            raise HTTPException(
+                status_code=400, detail="New password must be different from the current one."
+            )
+        user.password = get_password_hash(new_password)
+        AuthService._clear_otp(db, user)  # also commits the new password
 
     @staticmethod
     def _clear_otp(db: Session, user: User) -> None:

@@ -26,7 +26,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
-from sqlalchemy import text
+from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
@@ -186,6 +186,7 @@ class RefreshRequest(BaseModel):
 class ChangePasswordPayload(BaseModel):
     old_password: str = Field(..., min_length=1)
     new_password: str = Field(..., min_length=6)
+    otp: str = Field(..., min_length=6, max_length=6)
 
 
 AVATAR_ALLOWED_TYPES = {"image/jpeg", "image/png", "image/webp"}
@@ -196,6 +197,7 @@ LOCATION_MAX_LENGTH = 100
 MOBILE_MAX_LENGTH = 20
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 MOBILE_RE = re.compile(r"^\+?[0-9\s\-]{7,20}$")
+USERNAME_RE = re.compile(r"^[A-Za-z0-9_.]{3,30}$")
 
 
 def _profile_payload(user: User) -> dict:
@@ -327,6 +329,7 @@ def get_profile(
 async def update_profile(
     first_name: Optional[str] = Form(None),
     last_name: Optional[str] = Form(None),
+    username: Optional[str] = Form(None),
     bio: Optional[str] = Form(None),
     location: Optional[str] = Form(None),
     email: Optional[str] = Form(None),
@@ -376,6 +379,17 @@ async def update_profile(
         if existing is not None and existing.user_id != current_user.user_id:
             raise HTTPException(status_code=400, detail="This phone number is already registered.")
 
+    if username is not None:
+        username = username.strip()
+        if not USERNAME_RE.match(username):
+            raise HTTPException(
+                status_code=400,
+                detail="Username must be 3-30 characters: letters, numbers, dots and underscores only.",
+            )
+        existing = AuthService.get_by_username(db, username)
+        if existing is not None and existing.user_id != current_user.user_id:
+            raise HTTPException(status_code=400, detail="This username is already taken.")
+
     avatar_data_url: Optional[str] = None
     if avatar is not None and avatar.filename:
         if avatar.content_type not in AVATAR_ALLOWED_TYPES:
@@ -399,6 +413,27 @@ async def update_profile(
         current_user.mobile_no = mobile_no
     if avatar_data_url is not None:
         current_user.avatar_url = avatar_data_url
+
+    if username is not None and username != current_user.username:
+        uid = current_user.user_id
+        current_user.username = username
+
+        # The story tables keep copies of the username as text, so update those too.
+        my_story_ids = select(Story.story_id).where(Story.user_id == uid)
+        db.query(Story).filter(Story.user_id == uid).update(
+            {Story.username: username}, synchronize_session=False)
+        db.query(StoryView).filter(StoryView.user_id == uid).update(
+            {StoryView.viewed_by: username}, synchronize_session=False)
+        db.query(StoryView).filter(StoryView.story_id.in_(my_story_ids)).update(
+            {StoryView.story_sender: username}, synchronize_session=False)
+        db.query(StoryLike).filter(StoryLike.user_id == uid).update(
+            {StoryLike.liked_by: username}, synchronize_session=False)
+        db.query(StoryLike).filter(StoryLike.story_id.in_(my_story_ids)).update(
+            {StoryLike.user_name: username}, synchronize_session=False)
+        db.query(StoryReply).filter(StoryReply.user_id == uid).update(
+            {StoryReply.sender_name: username}, synchronize_session=False)
+        db.query(StoryReply).filter(StoryReply.story_id.in_(my_story_ids)).update(
+            {StoryReply.receiver_name: username}, synchronize_session=False)
 
     db.commit()
     db.refresh(current_user)
@@ -510,22 +545,32 @@ def refresh_token(payload: RefreshRequest, db: Session = Depends(get_db)) -> dic
     }
 
 
+@auth_router.post("/change-password/request-otp")
+def request_change_password_otp(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    masked = AuthService.send_change_password_otp(db, current_user)
+    return {"success": True, "message": f"We sent a 6-digit code to {masked}. It expires in 10 minutes."}
+
+
 @auth_router.post("/change-password")
 def change_password(
     payload: ChangePasswordPayload,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> dict:
-    if not verify_password(payload.old_password, current_user.password):
-        raise HTTPException(status_code=400, detail="Current password incorrect.")
-    current_user.password = get_password_hash(payload.new_password)
-    db.commit()
+    AuthService.change_password_with_otp(
+        db, current_user, payload.old_password, payload.otp, payload.new_password
+    )
     return {"success": True, "message": "Password changed successfully"}
 
 @auth_router.post("/forgot-password")
 def forgot_password(payload: ForgotPasswordRequest, db: Session = Depends(get_db)) -> dict:
+    if AuthService.get_by_identifier(db, payload.identifier) is None:
+        raise HTTPException(status_code=404, detail="No account is registered with this email.")
     AuthService.create_otp(db, payload.identifier)
-    return {"success": True, "message": "If that account exists, an OTP has been sent."}
+    return {"success": True, "message": "A 6-digit code has been sent to your registered email."}
 
 
 @auth_router.post("/verify-otp")

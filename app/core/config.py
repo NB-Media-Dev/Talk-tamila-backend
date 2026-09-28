@@ -34,6 +34,9 @@ class Settings(BaseSettings):
     SMTP_FROM_EMAIL: str = ""
     SMTP_FROM_NAME: str = "Talk Tamila"
 
+    # Brevo (transactional email) - used for OTP emails
+    BREVO_API_KEY: str = ""
+
     BACKEND_CORS_ORIGINS: Union[str, List[str]] = [
         "http://localhost:3000",
         "http://127.0.0.1:3000",
