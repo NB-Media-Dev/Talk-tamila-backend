@@ -12,6 +12,7 @@ class StorySlideResponse(BaseModel):
     media_type: str = "image"
     caption: Optional[str] = None
     content: Optional[str] = None
+    audience: Optional[str] = "PUBLIC"
     duration: int = 5000
     created_at: Optional[str] = None
     expires_at: Optional[str] = None
@@ -29,7 +30,6 @@ class StorySlideResponse(BaseModel):
 class StoryUserResponse(BaseModel):
     id: int
     user_id: int
-    userName: str
     username: str
     avatar: Optional[str] = None
     avatar_url: Optional[str] = None
@@ -76,7 +76,6 @@ class StoryItemResponse(BaseModel):
 class StoryGroupResponse(BaseModel):
     id: int
     user: StoryUserResponse
-    userName: Optional[str] = None
     username: Optional[str] = None
     avatar: Optional[str] = None
     verified: bool = True
@@ -96,13 +95,8 @@ class StoryGroupResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     @model_validator(mode="after")
-    def sync_usernames(self):
-        if not self.userName and self.username:
-            self.userName = self.username
-        elif not self.username and self.userName:
-            self.username = self.userName
-        elif not self.userName and self.user:
-            self.userName = self.user.userName
+    def sync_username(self):
+        if not self.username and self.user:
             self.username = self.user.username
         return self
 
@@ -427,7 +421,7 @@ class SlideOwnerFeedResponse(BaseModel):
 
 class StoryOwnerFeedResponse(BaseModel):
     story_id: int
-    userName: Optional[str] = "Your Story"
+    username: Optional[str] = "Your Story"
     author_id: Optional[int] = None
     slides: List[SlideOwnerFeedResponse] = []
     model_config = ConfigDict(from_attributes=True)

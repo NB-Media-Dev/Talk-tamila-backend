@@ -5,7 +5,6 @@ from fastapi import (
     Depends,
     File,
     Form,
-    HTTPException,
     Query,
     Response,
     UploadFile,
@@ -13,21 +12,21 @@ from fastapi import (
 )
 from sqlalchemy.orm import Session
 
-from app.common.models.story import Story
 from app.common.models.user import User
 from app.common.schemas.story import (
+    MyStoryAnalyticsResponse,
     PaginatedLikerResponse,
     PaginatedViewerResponse,
     StoryActivityResponse,
     StoryArchivedItem,
     StoryBatchResponse,
+    StoryCreateRequest,
     StoryGroupResponse,
     StoryItemResponse,
-    StoryCreateRequest,
-    StoryJsonCreateRequest,
-    StoryTextCreateRequest,
     StoryMuteResponse,
+    StoryOwnerFeedResponse,
     StoryPatchRequest,
+    StoryPauseRequest,
     StoryReactRequest,
     StoryReactResponse,
     StoryReplyRequest,
@@ -36,28 +35,16 @@ from app.common.schemas.story import (
     StoryShareRequest,
     StoryShareResponse,
     StoryStatsResponse,
-    StoryWithMetrics,
-    StoryPauseRequest,
-    MyStoryAnalyticsResponse,
-    StoryOwnerFeedResponse,
+    StoryTextCreateRequest,
 )
+from app.common.schemas.music import MusicTrackResponse
 from app.common.services.music_service import MusicService
-from app.common.services.story_service import (
-    StoryService,
-    build_story_item,
-    make_naive,
-    utc_now,
-    DEFAULT_DURATION_HOURS,
-)
-from app.core.database import SessionLocal
+from app.common.services.story_service import StoryService
 from app.core.dependencies import (
     get_current_user,
     get_db,
     get_optional_current_user,
 )
-from app.common.schemas.music import MusicTrackResponse
-from pydantic import BaseModel, Field
-from datetime import timedelta
 
 router = APIRouter(prefix="/stories", tags=["Stories"])
 
@@ -82,6 +69,14 @@ def list_active_stories(
 
 @router.get("/profile", response_model=List[StoryItemResponse])
 def get_my_active_stories(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> List[StoryItemResponse]:
+    return StoryService.get_my_stories(current_user, db)
+
+
+@router.get("/my", response_model=List[StoryItemResponse])
+def get_my_stories_alias(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> List[StoryItemResponse]:
@@ -214,43 +209,7 @@ def create_text_story(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> StoryItemResponse:
-    now_naive = make_naive(utc_now())
-    expires_naive = now_naive + timedelta(hours=payload.duration_hours or DEFAULT_DURATION_HOURS)
-
-    resolved_music_id = MusicService.resolve_or_create_music_track(
-        db=db,
-        music_id=payload.music_id,
-        music_title=payload.music_title,
-        music_artist=payload.music_artist,
-        music_url=payload.music_url,
-        music_thumbnail=payload.music_thumbnail,
-        music_duration=payload.music_duration or 60.0,
-    )
-
-    theme_val = (payload.theme or "insta").strip().lower()
-    media_url = payload.media_url or f"gradient:{theme_val}"
-
-    story = Story(
-        user_id=current_user.id,
-        username=current_user.username,
-        media_url=media_url,
-        media_type="text",
-        caption=payload.caption,
-        audience=payload.audience or "public",
-        created_at=now_naive,
-        expires_at=expires_naive,
-        music_id=resolved_music_id,
-        music_title=payload.music_title,
-        music_artist=payload.music_artist,
-        music_url=payload.music_url,
-        music_thumbnail=payload.music_thumbnail,
-        music_duration=payload.music_duration or 60.0,
-        music_start_time=max(0.0, float(payload.music_start_time or 0.0)),
-    )
-    db.add(story)
-    db.commit()
-    db.refresh(story)
-    return build_story_item(story, current_user.id, db)
+    return StoryService.create_text_story(payload, current_user, db)
 
 
 @router.patch("/{story_id:int}", response_model=StoryItemResponse)
@@ -430,31 +389,6 @@ def unmute_creator(
 ) -> dict:
     return StoryService.unmute_creator(user_id, current_user, db)
 
-
-@router.post("/close-friends/{friend_id:int}")
-def add_close_friend(
-    friend_id: int,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-) -> dict:
-    return StoryService.add_close_friend(current_user.id, friend_id, db)
-
-
-@router.delete("/close-friends/{friend_id:int}")
-def remove_close_friend(
-    friend_id: int,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-) -> dict:
-    return StoryService.remove_close_friend(current_user.id, friend_id, db)
-
-
-@router.get("/close-friends", response_model=List[int])
-def get_close_friends(
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-) -> List[int]:
-    return StoryService.get_close_friends(current_user.id, db)
 
 
 @router.post("/follow/{user_id:int}")

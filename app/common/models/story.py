@@ -82,6 +82,9 @@ class Story(Base):
 
 class StoryView(Base):
     __tablename__ = "story_views"
+    __table_args__ = (
+        UniqueConstraint("story_id", "user_id", name="uq_story_views_story_user"),
+    )
 
     view_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     story_id: Mapped[int] = mapped_column(ForeignKey("stories.story_id", ondelete="CASCADE"), nullable=False, index=True)

@@ -28,3 +28,15 @@ class NotificationResponse(BaseModel):
     created_at: str
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class FollowResponse(BaseModel):
+    id: Optional[int] = None
+    follower_id: int
+    following_id: int
+    user_name: Optional[str] = None
+    is_following: Optional[bool] = True
+    followers_count: Optional[int] = 0
+
+    model_config = ConfigDict(from_attributes=True)
+

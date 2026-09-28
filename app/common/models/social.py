@@ -81,6 +81,7 @@ class Follow(Base):
         nullable=False,
         index=True,
     )
+    user_name: Mapped[str | None] = mapped_column(String(100), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
     follower: Mapped["User"] = relationship("User", foreign_keys=[follower_id])

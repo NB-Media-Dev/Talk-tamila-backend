@@ -6,10 +6,10 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import HTTPException, UploadFile, status
-from sqlalchemy import desc, func, or_
+from sqlalchemy import and_, desc, func, or_
 from sqlalchemy.orm import Session, joinedload, selectinload
 
-from app.common.models.social import Notification, Follow
+from app.common.models.social import Notification, Follow, CloseFriend
 from app.common.models.story import (
     Story,
     StoryLike,
@@ -182,7 +182,6 @@ def build_story_item(
         owner_data = StoryUserResponse(
             id=story.owner.id,
             user_id=story.owner.id,
-            userName=story.owner.username or f"user_{story.owner.id}",
             username=story.owner.username or f"user_{story.owner.id}",
             avatar=story.owner.avatar_url,
             avatar_url=story.owner.avatar_url,
@@ -198,13 +197,15 @@ def build_story_item(
         story_id=story.story_id,
         id=story.story_id,
         user_id=story.user_id,
+        author_id=story.user_id,
         media_url=story.media_url,
         imageUrl=story.media_url,
         media_type=story.media_type or "image",
         created_at=format_iso(story.created_at) or utc_now().isoformat(),
         expires_at=format_iso(story.expires_at) or (utc_now() + timedelta(hours=24)).isoformat(),
         caption=story.caption,
-        audience=story.audience or "public",
+        content=story.caption,
+        audience=story.audience or "PUBLIC",
         is_active=is_active,
         has_active_story=is_active,
         music_id=story.music_id,
@@ -225,6 +226,20 @@ def build_story_item(
     )
 
 
+def normalize_audience(aud: Optional[Any], is_admin: bool = False) -> str:
+    if is_admin:
+        return "PUBLIC"
+    if not aud:
+        return "PUBLIC"
+    val = aud.value if hasattr(aud, "value") else str(aud)
+    val = val.strip().upper()
+    if val in ("CLOSE", "CLOSE_FRIEND", "CLOSE_FRIENDS"):
+        return "CLOSE_FRIENDS"
+    if val in ("FOLLOWER", "FOLLOWERS"):
+        return "FOLLOWERS"
+    return "PUBLIC"
+
+
 def story_to_slide(story_item: StoryItemResponse, creator_name: str) -> StorySlideResponse:
     music_label = None
     if story_item.music_title:
@@ -237,6 +252,7 @@ def story_to_slide(story_item: StoryItemResponse, creator_name: str) -> StorySli
         media_url=story_item.media_url,
         media_type=story_item.media_type,
         caption=story_item.caption,
+        audience=story_item.audience or "PUBLIC",
         duration=5000,
         created_at=story_item.created_at,
         expires_at=story_item.expires_at,
@@ -295,16 +311,13 @@ class StoryService:
                 music_duration=music_duration,
             )
 
-        aud = getattr(payload, "audience", "PUBLIC")
-        audience_val = aud.value if hasattr(aud, "value") else str(aud)
-
         story = Story(
             user_id=current_user.id,
             username=current_user.username,
             media_url=media_url,
             media_type=media_type,
             caption=caption,
-            audience=audience_val.upper() if audience_val else "PUBLIC",
+            audience=normalize_audience(getattr(payload, "audience", "PUBLIC"), is_admin=current_user.is_admin),
             created_at=now_naive,
             expires_at=expires_naive,
             music_id=resolved_music_id,
@@ -322,6 +335,158 @@ class StoryService:
         return build_story_item(story, current_user.id, db)
 
     @staticmethod
+    def create_text_story(payload, current_user: User, db: Session) -> StoryItemResponse:
+        now_naive = make_naive(utc_now())
+        duration_hours = getattr(payload, "duration_hours", DEFAULT_DURATION_HOURS) or DEFAULT_DURATION_HOURS
+        expires_naive = now_naive + timedelta(hours=duration_hours)
+
+        resolved_music_id = MusicService.resolve_or_create_music_track(
+            db=db,
+            music_id=getattr(payload, "music_id", None),
+            music_title=getattr(payload, "music_title", None),
+            music_artist=getattr(payload, "music_artist", None),
+            music_url=getattr(payload, "music_url", None),
+            music_thumbnail=getattr(payload, "music_thumbnail", None),
+            music_duration=getattr(payload, "music_duration", 60.0) or 60.0,
+        )
+
+        theme_val = (getattr(payload, "theme", "insta") or "insta").strip().lower()
+        media_url = getattr(payload, "media_url", None) or f"gradient:{theme_val}"
+
+        story = Story(
+            user_id=current_user.id,
+            username=current_user.username,
+            media_url=media_url,
+            media_type="text",
+            caption=getattr(payload, "caption", None),
+            audience=normalize_audience(getattr(payload, "audience", "PUBLIC"), is_admin=current_user.is_admin),
+            created_at=now_naive,
+            expires_at=expires_naive,
+            music_id=resolved_music_id,
+            music_title=getattr(payload, "music_title", None),
+            music_artist=getattr(payload, "music_artist", None),
+            music_url=getattr(payload, "music_url", None),
+            music_thumbnail=getattr(payload, "music_thumbnail", None),
+            music_duration=getattr(payload, "music_duration", 60.0) or 60.0,
+            music_start_time=max(0.0, float(getattr(payload, "music_start_time", 0.0) or 0.0)),
+        )
+        db.add(story)
+        db.commit()
+        db.refresh(story)
+        return build_story_item(story, current_user.id, db)
+
+    @staticmethod
+    def get_owner_feed(current_user: User, db: Session):
+        from app.common.schemas.story import SlideOwnerFeedResponse, StoryOwnerFeedResponse
+
+        now_naive = make_naive(utc_now())
+        cutoff = now_naive - timedelta(hours=DEFAULT_DURATION_HOURS)
+
+        stories = (
+            db.query(Story)
+            .filter(
+                Story.user_id == current_user.id,
+                Story.is_deleted.is_(False),
+                or_(Story.expires_at.is_(None), Story.expires_at > now_naive),
+                Story.created_at >= cutoff,
+            )
+            .order_by(desc(Story.created_at))
+            .all()
+        )
+        if not stories:
+            return []
+
+        story_ids = [s.story_id for s in stories]
+        batch_stats = fetch_batch_story_stats(story_ids, current_user.id, db)
+
+        slides = [
+            SlideOwnerFeedResponse(
+                id=s.story_id,
+                content=s.caption,
+                imageUrl=s.media_url,
+                media_url=s.media_url,
+                views_count=batch_stats["views"].get(s.story_id, 0),
+            )
+            for s in stories
+        ]
+        return [
+            StoryOwnerFeedResponse(
+                story_id=stories[0].story_id,
+                username=current_user.username or "Your Story",
+                author_id=current_user.id,
+                slides=slides,
+            )
+        ]
+
+    @staticmethod
+    def get_privacy_feed(
+        current_user: User,
+        db: Session,
+        limit: int = 20,
+        offset: int = 0,
+    ) -> List[StoryItemResponse]:
+        now_naive = make_naive(utc_now())
+        cutoff = now_naive - timedelta(hours=DEFAULT_DURATION_HOURS)
+
+        query = (
+            db.query(Story)
+            .options(joinedload(Story.owner))
+            .filter(
+                Story.is_deleted.is_(False),
+                or_(Story.expires_at.is_(None), Story.expires_at > now_naive),
+                Story.created_at >= cutoff,
+            )
+        )
+
+        if not current_user.is_admin:
+            following_ids = [
+                r[0] for r in db.query(Follow.following_id).filter(Follow.follower_id == current_user.id).all()
+            ]
+            cf_creator_ids = [
+                r[0] for r in db.query(CloseFriend.user_id).filter(CloseFriend.friend_id == current_user.id).all()
+            ]
+            muted_ids = [
+                r[0] for r in db.query(StoryMute.muted_user_id).filter(StoryMute.user_id == current_user.id).all()
+            ]
+
+            audience_conditions = [
+                func.upper(Story.audience).in_(["PUBLIC"])
+            ]
+            if following_ids:
+                audience_conditions.append(
+                    and_(
+                        func.upper(Story.audience).in_(["FOLLOWERS", "FOLLOWER"]),
+                        Story.user_id.in_(following_ids),
+                    )
+                )
+            if cf_creator_ids:
+                audience_conditions.append(
+                    and_(
+                        func.upper(Story.audience).in_(["CLOSE_FRIENDS", "CLOSE", "CLOSE_FRIEND"]),
+                        Story.user_id.in_(cf_creator_ids),
+                    )
+                )
+
+            privacy_condition = or_(
+                Story.user_id == current_user.id,
+                and_(
+                    ~Story.user_id.in_(muted_ids) if muted_ids else True,
+                    or_(*audience_conditions),
+                ),
+            )
+            query = query.filter(privacy_condition)
+
+        stories = (
+            query.order_by(desc(Story.created_at))
+            .offset(offset)
+            .limit(limit)
+            .all()
+        )
+        story_ids = [s.story_id for s in stories]
+        batch_stats = fetch_batch_story_stats(story_ids, current_user.id, db)
+        return [build_story_item(s, current_user.id, db, batch_stats=batch_stats) for s in stories]
+
+    @staticmethod
     def list_active_groups(
         current_user: Optional[User],
         db: Session,
@@ -334,6 +499,7 @@ class StoryService:
             db.query(Story)
             .options(joinedload(Story.owner))
             .filter(
+                Story.is_deleted.is_(False),
                 or_(Story.expires_at.is_(None), Story.expires_at > now_naive),
                 Story.created_at >= cutoff,
             )
@@ -344,16 +510,38 @@ class StoryService:
 
         active_stories = query.order_by(desc(Story.created_at)).all()
         caller_id = current_user.id if current_user else None
+        is_admin = current_user.is_admin if current_user else False
 
         muted_ids = set()
+        following_ids = set()
+        cf_creator_ids = set()
         if current_user:
             muted_rows = db.query(StoryMute.muted_user_id).filter(StoryMute.user_id == current_user.id).all()
             muted_ids = {r[0] for r in muted_rows}
+            following_rows = db.query(Follow.following_id).filter(Follow.follower_id == current_user.id).all()
+            following_ids = {r[0] for r in following_rows}
+            cf_rows = db.query(CloseFriend.user_id).filter(CloseFriend.friend_id == current_user.id).all()
+            cf_creator_ids = {r[0] for r in cf_rows}
 
-        visible_stories = [
-            s for s in active_stories
-            if not (caller_id and s.user_id in muted_ids and s.user_id != caller_id)
-        ]
+        def can_view(s: Story) -> bool:
+            aud = normalize_audience(s.audience)
+            if not caller_id:
+                return aud == "PUBLIC"
+            if s.user_id == caller_id:
+                return True
+            if s.user_id in muted_ids:
+                return False
+            if is_admin:
+                return True
+            if aud == "PUBLIC":
+                return True
+            if aud == "FOLLOWERS":
+                return s.user_id in following_ids
+            if aud == "CLOSE_FRIENDS":
+                return s.user_id in cf_creator_ids
+            return False
+
+        visible_stories = [s for s in active_stories if can_view(s)]
 
         story_ids = [s.story_id for s in visible_stories]
         batch_stats = fetch_batch_story_stats(story_ids, caller_id, db)
@@ -371,7 +559,6 @@ class StoryService:
                 user_res = StoryUserResponse(
                     id=uid,
                     user_id=uid,
-                    userName=uname,
                     username=uname,
                     avatar=avatar,
                     avatar_url=avatar,
@@ -397,7 +584,7 @@ class StoryService:
         result_groups: List[StoryGroupResponse] = []
         for uid, data in groups_dict.items():
             stories_list: List[StoryItemResponse] = data["stories"]
-            creator_name = data["user"].userName
+            creator_name = data["user"].username
             slides_list = [story_to_slide(s, creator_name) for s in stories_list]
 
             all_viewed = all(s.viewed_by_me for s in stories_list) if caller_id else False
@@ -409,7 +596,6 @@ class StoryService:
                 StoryGroupResponse(
                     id=uid,
                     user=data["user"],
-                    userName=creator_name,
                     username=creator_name,
                     avatar=data["user"].avatar,
                     verified=data["user"].verified,
@@ -444,6 +630,7 @@ class StoryService:
             .options(joinedload(Story.owner))
             .filter(
                 Story.user_id == current_user.id,
+                Story.is_deleted.is_(False),
                 or_(Story.expires_at.is_(None), Story.expires_at > now_naive),
                 Story.created_at >= cutoff,
             )
@@ -464,23 +651,87 @@ class StoryService:
             .options(joinedload(Story.owner))
             .filter(
                 Story.user_id == target_user_id,
+                Story.is_deleted.is_(False),
                 or_(Story.expires_at.is_(None), Story.expires_at > now_naive),
                 Story.created_at >= cutoff,
             )
             .order_by(desc(Story.created_at))
             .all()
         )
-        story_ids = [s.story_id for s in stories]
+        if not stories:
+            return []
+
+        caller = db.get(User, current_user_id) if current_user_id else None
+        is_admin = caller.is_admin if caller else False
+
+        is_following = False
+        is_close_friend = False
+        if current_user_id and current_user_id != target_user_id:
+            is_following = (
+                db.query(Follow)
+                .filter(Follow.follower_id == current_user_id, Follow.following_id == target_user_id)
+                .first()
+                is not None
+            )
+            is_close_friend = (
+                db.query(CloseFriend)
+                .filter(CloseFriend.user_id == target_user_id, CloseFriend.friend_id == current_user_id)
+                .first()
+                is not None
+            )
+
+        def can_view(s: Story) -> bool:
+            if not current_user_id:
+                return normalize_audience(s.audience) == "PUBLIC"
+            if target_user_id == current_user_id or is_admin:
+                return True
+            aud = normalize_audience(s.audience)
+            if aud == "PUBLIC":
+                return True
+            if aud == "FOLLOWERS":
+                return is_following
+            if aud == "CLOSE_FRIENDS":
+                return is_close_friend
+            return False
+
+        visible_stories = [s for s in stories if can_view(s)]
+        story_ids = [s.story_id for s in visible_stories]
         batch_stats = fetch_batch_story_stats(story_ids, current_user_id, db)
-        return [build_story_item(s, current_user_id, db, batch_stats=batch_stats) for s in stories]
+        return [build_story_item(s, current_user_id, db, batch_stats=batch_stats) for s in visible_stories]
 
     @staticmethod
     def get_story_by_id(story_id: int, current_user_id: Optional[int], db: Session) -> StoryItemResponse:
         story = db.get(Story, story_id)
-        if not story:
+        if not story or story.is_deleted:
             raise HTTPException(status_code=404, detail="Story not found")
         if story.expires_at and story.expires_at < make_naive(utc_now()):
             raise HTTPException(status_code=404, detail="Story not found")
+
+        caller = db.get(User, current_user_id) if current_user_id else None
+        is_admin = caller.is_admin if caller else False
+        aud = normalize_audience(story.audience)
+
+        if caller and (story.user_id == caller.id or is_admin):
+            pass
+        elif aud == "PUBLIC":
+            pass
+        elif not caller:
+            raise HTTPException(status_code=403, detail="Story is private.")
+        elif aud == "FOLLOWERS":
+            is_following = db.query(Follow).filter(
+                Follow.follower_id == caller.id,
+                Follow.following_id == story.user_id,
+            ).first() is not None
+            if not is_following:
+                raise HTTPException(status_code=403, detail="Story only available to followers.")
+        elif aud == "CLOSE_FRIENDS":
+            is_close_friend = db.query(CloseFriend).filter(
+                CloseFriend.user_id == story.user_id,
+                CloseFriend.friend_id == caller.id,
+            ).first() is not None
+            if not is_close_friend:
+                raise HTTPException(status_code=403, detail="Story only available to close friends.")
+
         return build_story_item(story, current_user_id, db)
 
     @staticmethod
@@ -525,7 +776,7 @@ class StoryService:
             media_url=data_url,
             media_type=media_type,
             caption=caption,
-            audience=audience or "public",
+            audience=normalize_audience(audience, is_admin=current_user.is_admin),
             created_at=now_naive,
             expires_at=expires_naive,
             music_id=resolved_music_id,
@@ -601,7 +852,7 @@ class StoryService:
                 media_url=data_url,
                 media_type=media_type,
                 caption=item_caption,
-                audience=audience or "public",
+                audience=normalize_audience(audience, is_admin=current_user.is_admin),
                 created_at=now_naive + timedelta(milliseconds=idx * 10),
                 expires_at=expires_naive,
                 music_id=resolved_music_id,
@@ -680,6 +931,8 @@ class StoryService:
         story = db.get(Story, story_id)
         if not story:
             raise HTTPException(status_code=404, detail="Story not found")
+        if story.user_id == current_user.id:
+            raise HTTPException(status_code=400, detail="Cannot like your own story.")
 
         # Resolve story owner / uploader username
         owner_name = None
@@ -794,6 +1047,8 @@ class StoryService:
         story = db.get(Story, story_id)
         if not story:
             raise HTTPException(status_code=404, detail="Story not found")
+        if story.user_id == current_user.id:
+            raise HTTPException(status_code=400, detail="Cannot reply to your own story.")
 
         # Directly resolve story owner / receiver username
         receiver_name = None
@@ -991,24 +1246,33 @@ class StoryService:
         if target is None:
             raise HTTPException(status_code=404, detail="User not found.")
 
+        follower = db.query(User).filter(User.user_id == follower_id).first()
+        if follower is None:
+            raise HTTPException(status_code=404, detail="Follower not found.")
+
         existing = db.query(Follow).filter(
             Follow.follower_id == follower_id,
             Follow.following_id == following_id,
         ).first()
 
+        owner_name = follower.username
+
         if existing is None:
-            db.add(Follow(follower_id=follower_id, following_id=following_id))
-            follower = db.query(User).filter(User.user_id == follower_id).first()
-            if follower is not None:
-                follower._ensure_profile().following_count += 1
+            db.add(Follow(follower_id=follower_id, following_id=following_id, user_name=owner_name))
+            follower._ensure_profile().following_count += 1
             target._ensure_profile().followers_count += 1
             db.commit()
             db.refresh(target)
+        else:
+            if not existing.user_name and owner_name:
+                existing.user_name = owner_name
+                db.commit()
 
         return {
             "success": True,
             "is_following": True,
             "followers_count": target.followers_count,
+            "user_name": owner_name,
         }
 
     @staticmethod
@@ -1036,6 +1300,10 @@ class StoryService:
             "is_following": False,
             "followers_count": target.followers_count if target else 0,
         }
+
+    # NOTE: close-friend add/remove/list now lives solely in
+    # app/story/settings_routes.py (`/stories/settings/close-friends/*`) —
+    # this was previously duplicated here and exposed at `/stories/close-friends/*`.
 
     @staticmethod
     def get_suggestions(current_user: User, db: Session, limit: int = 10) -> List[dict]:
@@ -1143,17 +1411,8 @@ class StoryService:
                 detail="Only the author who created this story can delete it.",
             )
 
-        try:
-            db.query(StorySave).filter(StorySave.story_id == story_id).delete(synchronize_session=False)
-            db.query(StoryReport).filter(StoryReport.story_id == story_id).delete(synchronize_session=False)
-            db.query(StoryShare).filter(StoryShare.story_id == story_id).delete(synchronize_session=False)
-            db.query(StoryReply).filter(StoryReply.story_id == story_id).delete(synchronize_session=False)
-            db.query(StoryLike).filter(StoryLike.story_id == story_id).delete(synchronize_session=False)
-            db.query(StoryView).filter(StoryView.story_id == story_id).delete(synchronize_session=False)
-        except Exception as e:
-            logger.warning("Cascading cleanup note for story %s: %s", story_id, e)
-
-        db.delete(story)
+        story.is_deleted = True
+        story.deleted_at = make_naive(utc_now())
         db.commit()
         logger.info("Story %s deleted by user %s", story_id, current_user.id)
         return {"success": True, "message": "Story deleted successfully", "story_id": story_id}
@@ -1378,9 +1637,9 @@ class StoryService:
         )
 
     @staticmethod
-    def update_story(story_id: int, caption: Optional[str], audience: Optional[str], current_user: User, db: Session) -> Story:
+    def update_story(story_id: int, caption: Optional[str], audience: Optional[Any], current_user: User, db: Session) -> StoryItemResponse:
         story = db.get(Story, story_id)
-        if not story:
+        if not story or story.is_deleted:
             raise HTTPException(status_code=404, detail="Story not found")
         if story.user_id != current_user.id:
             raise HTTPException(status_code=403, detail="Only the story owner can edit it.")
@@ -1388,7 +1647,7 @@ class StoryService:
         if caption is not None:
             story.caption = caption
         if audience is not None:
-            story.audience = audience
+            story.audience = normalize_audience(audience, is_admin=current_user.is_admin)
 
         db.commit()
         db.refresh(story)

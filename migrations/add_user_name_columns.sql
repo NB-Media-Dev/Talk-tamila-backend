@@ -49,4 +49,12 @@ ALTER TABLE story_replies
     DROP COLUMN IF EXISTS recevier_name;
 
 
+ALTER TABLE follows
+    ADD COLUMN IF NOT EXISTS user_name VARCHAR(100) NULL;
+
+-- Backfill user_name from users table (account owner who is following / follower)
+UPDATE follows f
+JOIN users u ON f.follower_id = u.user_id
+SET f.user_name = u.username
+WHERE f.user_name IS NULL OR f.user_name = '';
 
