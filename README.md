@@ -41,34 +41,36 @@ talk-tamila-backend/
 │   │   │   └── freelancer.py   # FreelancerProfile, Assignment
 │   │   ├── schemas/            # Pydantic request/response schemas
 │   │   ├── services/           # Core business logic
-│   │   │   ├── auth_service.py     # Register, login, OTP, password reset
-│   │   │   ├── message_service.py  # Direct messaging, reactions, threads
-│   │   │   ├── story_service.py    # Story CRUD, views, likes, replies
-│   │   │   ├── post_service.py     # Posts, comments, likes, reposts
-│   │   │   ├── social_service.py   # Follow, unfollow, notifications
-│   │   │   ├── music_service.py    # Music tracks
-│   │   │   └── notification_service.py
+│   │   │   ├── auth_service.py         # Register, login, OTP, password reset
+│   │   │   ├── message_service.py      # Direct messaging, reactions, threads
+│   │   │   ├── story_service.py        # Story CRUD, views, likes, replies
+│   │   │   ├── post_service.py         # Posts, comments, likes, reposts
+│   │   │   ├── social_service.py       # Follow, unfollow, notifications
+│   │   │   ├── music_service.py        # Music tracks
+│   │   │   └── notification_service.py # Push/in-app notifications
 │   │   ├── enums.py            # Role enums (admin, influencer, freelancer)
 │   │   └── routes.py           # Shared routes
 │   ├── core/
-│   │   ├── config.py           # Settings loaded from .env
-│   │   ├── database.py         # SQLAlchemy engine & session
+│   │   ├── config.py           # Settings loaded from .env (Pydantic Settings)
+│   │   ├── database.py         # SQLAlchemy engine & session factory
 │   │   ├── dependencies.py     # get_db, get_current_user, role guards
 │   │   ├── middleware.py       # Request logging middleware
-│   │   ├── scheduler.py        # Background job scheduler
-│   │   └── security.py        # JWT create/decode, password hashing
-│   ├── freelancer/             # Freelancer module
-│   ├── influencer/             # Influencer module
+│   │   ├── scheduler.py        # Background job scheduler (APScheduler)
+│   │   └── security.py         # JWT create/decode, password hashing
+│   ├── freelancer/             # Freelancer module (routes, schemas, services)
+│   ├── influencer/             # Influencer module (routes, schemas, services)
 │   ├── message/                # Direct messaging module
 │   │   └── routes.py           # /messages endpoints
-│   ├── story/                  # Story module (public & settings routes)
+│   ├── story/                  # Story module
+│   │   ├── routes.py           # Story CRUD endpoints
+│   │   └── settings_routes.py  # Story privacy / settings endpoints
 │   ├── superadmin/             # SuperAdmin module
 │   ├── utils/
-│   │   ├── email.py            # Brevo email OTP sender
+│   │   ├── email.py            # Brevo HTTP email sender (OTP)
 │   │   ├── sms.py              # SMS utility
 │   │   ├── pagination.py       # Cursor/offset pagination helpers
-│   │   └── seed.py             # Database seeding for development
-│   └── main.py                 # FastAPI app entry point & auth endpoints
+│   │   └── seed.py             # Dev database seeding
+│   └── main.py                 # FastAPI app entry point + auth router
 ├── tests/                      # Pytest test suite
 │   ├── conftest.py
 │   ├── test_admin.py
@@ -79,55 +81,60 @@ talk-tamila-backend/
 │   ├── test_security.py
 │   ├── test_story_privacy.py
 │   └── test_message_reactions_and_story_messages.py
+├── .env                        # Local environment variables (not committed)
 ├── .env.example                # Example environment variables
-├── docker-compose.yml          # MySQL via Docker for local dev
-├── requirements.txt
-└── alembic.ini
+├── docker-compose.yml          # MySQL via Docker for local development
+├── alembic.ini                 # Alembic migration config
+└── requirements.txt            # Python dependencies
 ```
 
 ---
 
 ## API Modules & Endpoints
 
-### Auth (`/api/v1/auth`)
+### Auth — `/api/v1/auth`
+
 | Method | Endpoint | Description |
 |---|---|---|
 | `POST` | `/signup` | Register a new user |
 | `POST` | `/register` | Alias for `/signup` |
-| `POST` | `/login` | Login (JSON or form-data), returns JWT tokens |
-| `GET` | `/profile` | Get current user's profile (live follower counts) |
+| `POST` | `/login` | Login with email/username + password, returns JWT tokens |
+| `GET` | `/profile` | Get current user's profile with live follower counts |
 | `GET` | `/me` | Alias for `/profile` |
-| `PUT` | `/profile` | Update profile (name, bio, avatar, username, email) |
+| `PUT` | `/profile` | Update profile (name, bio, avatar, username, email, mobile) |
 | `GET` | `/check-availability` | Check if email / username / mobile is already taken |
-| `POST` | `/refresh` | Refresh access token using refresh token |
-| `POST` | `/change-password/request-otp` | Send OTP to email for password change |
-| `POST` | `/change-password` | Change password with OTP verification |
-| `POST` | `/forgot-password` | Send OTP for password reset |
+| `POST` | `/refresh` | Get new access token using a refresh token |
+| `POST` | `/change-password/request-otp` | Send OTP to email to authorize password change |
+| `POST` | `/change-password` | Change password with old password + OTP verification |
+| `POST` | `/forgot-password` | Send OTP to email for password reset |
 | `POST` | `/verify-otp` | Verify reset OTP |
-| `POST` | `/reset-password` | Reset password with verified OTP |
+| `POST` | `/reset-password` | Reset password after OTP is verified |
 
-### Messages (`/api/v1/messages`)
+### Messages — `/api/v1/messages`
+
 | Method | Endpoint | Description |
 |---|---|---|
-| `GET` | `/summary` | Unread count + last message (used by navbar badge) |
+| `GET` | `/summary` | Unread message count + last message (for navbar badge) |
 | `GET` | `/conversations` | List all conversations |
 | `GET` | `/users` | Search all users to start a new conversation |
 | `GET` | `/thread/{user_id}` | Fetch message thread with a specific user |
 | `POST` | `/thread/{user_id}` | Send a message (text or story reply) |
-| `PUT` | `/thread/{user_id}/read` | Mark thread as read |
+| `PUT` | `/thread/{user_id}/read` | Mark all messages in a thread as read |
 | `POST` | `/react/{message_id}` | Add emoji reaction to a message |
-| `DELETE` | `/react/{message_id}` | Remove emoji reaction |
+| `DELETE` | `/react/{message_id}` | Remove emoji reaction from a message |
 
-### Stories (`/api/v1/`)
-- Create, view, like, reply to, and share stories (24h ephemeral)
-- Story privacy controls, mute/report
+### Stories — `/api/v1/`
+- Create, view, like, reply to, and share 24-hour ephemeral stories
+- Story privacy controls (audience selection)
+- Mute and report stories
 - Music soundtrack sync on stories
+- Story replies are linked to direct messages
 
 ### Other Modules
-- **Admin** — Content moderation, user management, approvals
-- **Influencer** — Analytics, assignments, submissions, earnings
-- **Freelancer** — Tasks, content submissions, earnings
-- **SuperAdmin** — Platform configuration, admin management
+- **Admin** — Content moderation, user management, category approvals
+- **Influencer** — Analytics, assignment management, submissions, earnings
+- **Freelancer** — Task board, content submissions, earnings tracker
+- **SuperAdmin** — Platform configuration, admin account management
 
 ---
 
@@ -163,10 +170,9 @@ pip install -r requirements.txt
 ```bash
 docker-compose up -d
 ```
-This starts MySQL on port `3306` with database `talktamila`.
+This starts a MySQL 8.0 container on port `3306` with database `talktamila`.
 
 ### 5. Configure Environment Variables
-Copy the example file and fill in your values:
 ```bash
 cp .env.example .env
 ```
@@ -180,7 +186,7 @@ ALGORITHM=HS256
 ACCESS_TOKEN_EXPIRE_MINUTES=1440
 REFRESH_TOKEN_EXPIRE_MINUTES=10080
 
-# Brevo (for OTP emails)
+# Brevo — for OTP emails (Railway blocks SMTP, use this instead)
 BREVO_API_KEY=your-brevo-api-key
 ```
 
@@ -195,14 +201,18 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
 The API will be available at:
-- **Local:** `http://localhost:8000`
-- **Docs (Swagger UI):** `http://localhost:8000/docs`
-- **Redoc:** `http://localhost:8000/redoc`
-- **Health Check:** `http://localhost:8000/health`
+
+| URL | Description |
+|---|---|
+| `http://localhost:8000` | API root |
+| `http://localhost:8000/docs` | Swagger UI (interactive docs) |
+| `http://localhost:8000/redoc` | ReDoc documentation |
+| `http://localhost:8000/health` | Health check endpoint |
 
 ---
 
 ## Running Tests
+
 ```bash
 pytest tests/ -v
 ```
@@ -215,28 +225,28 @@ pytest tests/ -v
 |---|---|---|
 | `ENVIRONMENT` | `development` or `production` | `development` |
 | `DATABASE_URL` | MySQL connection string | `mysql+pymysql://root:1234@localhost:3306/talktamila` |
-| `SECRET_KEY` | JWT signing key (must be strong in production) | dev key |
+| `SECRET_KEY` | JWT signing key — **must be strong in production** | dev key |
 | `ALGORITHM` | JWT algorithm | `HS256` |
-| `ACCESS_TOKEN_EXPIRE_MINUTES` | Access token TTL in minutes | `1440` (24h) |
-| `REFRESH_TOKEN_EXPIRE_MINUTES` | Refresh token TTL in minutes | `10080` (7 days) |
-| `BREVO_API_KEY` | Brevo API key for OTP emails | — |
-| `SMTP_HOST` | SMTP host (fallback email) | `smtp.gmail.com` |
+| `ACCESS_TOKEN_EXPIRE_MINUTES` | Access token TTL | `1440` (24h) |
+| `REFRESH_TOKEN_EXPIRE_MINUTES` | Refresh token TTL | `10080` (7 days) |
+| `BREVO_API_KEY` | Brevo API key for OTP/transactional emails | — |
+| `SMTP_HOST` | SMTP host (fallback) | `smtp.gmail.com` |
 | `SMTP_PORT` | SMTP port | `587` |
 | `SMTP_USERNAME` | SMTP username | — |
 | `SMTP_PASSWORD` | SMTP password | — |
 
-> **Note:** Railway blocks SMTP ports. Use Brevo (HTTP-based) for email in production.
+> **Note:** Railway blocks SMTP ports. Use **Brevo** (HTTP-based email API) for all transactional emails in production.
 
 ---
 
 ## User Roles
 
-| Role | Description |
+| Role | Access Level |
 |---|---|
-| `superadmin` | Full platform control — admin management, platform config |
+| `superadmin` | Full platform control — admin management, global settings |
 | `admin` | Content moderation, user management, approvals |
-| `influencer` | Content creator with analytics, earnings, assignments |
-| `freelancer` | Task-based creator — submissions, reposts, earnings |
+| `influencer` | Content creator — analytics, assignments, earnings, messaging |
+| `freelancer` | Task-based creator — submissions, reposts, earnings, messaging |
 
 ---
 
@@ -244,12 +254,12 @@ pytest tests/ -v
 
 The backend is hosted on **Railway** with a live MySQL database.
 
-Push to `main` branch on GitHub to trigger auto-deployment:
+Push to the `main` branch on GitHub to trigger auto-deployment:
 ```bash
 git push origin main
 ```
 
-Live API base URL: configured via `BASE_URL` environment variable in Railway.
+Set all environment variables in the Railway project dashboard under **Variables**.
 
 ---
 
