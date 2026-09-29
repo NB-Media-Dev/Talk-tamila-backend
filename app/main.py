@@ -116,8 +116,10 @@ async def lifespan(app: FastAPI):
                 "ALTER TABLE story_likes ADD COLUMN user_name VARCHAR(100) NULL",
                 "ALTER TABLE story_replies ADD COLUMN sender_name VARCHAR(100) NULL",
                 "ALTER TABLE story_replies ADD COLUMN receiver_name VARCHAR(100) NULL",
+                "ALTER TABLE follows ADD COLUMN user_name VARCHAR(100) NULL",
                 "ALTER TABLE stories ADD COLUMN reply LONGTEXT NULL",
                 "ALTER TABLE profiles MODIFY COLUMN profile_pic_url LONGTEXT NULL",
+                "ALTER TABLE profiles ADD COLUMN username VARCHAR(100) NULL",
                 "ALTER TABLE direct_messages ADD COLUMN kind VARCHAR(20) NOT NULL DEFAULT 'text'",
                 "ALTER TABLE direct_messages ADD COLUMN story_id INT NULL",
                 "ALTER TABLE direct_messages ADD CONSTRAINT fk_direct_messages_story "
@@ -283,6 +285,16 @@ def signup(payload: RegisterRequest, db: Session = Depends(get_db)) -> dict:
         "user": user_dict,
         **user_dict,
     }
+
+
+@auth_router.post("/register", status_code=status.HTTP_201_CREATED)
+def register_alias(payload: RegisterRequest, db: Session = Depends(get_db)) -> dict:
+    return signup(payload, db)
+
+
+@auth_router.get("/me", status_code=status.HTTP_200_OK)
+def get_me_alias(current_user: User = Depends(get_current_user)) -> dict:
+    return _profile_payload(current_user)
 
 
 login_schema_extra = {
@@ -600,5 +612,42 @@ routers = [
     superadmin_router,
 ]
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 for r in routers:
     app.include_router(r, prefix=settings.API_V1_PREFIX)
+    app.include_router(r, prefix="/api")
