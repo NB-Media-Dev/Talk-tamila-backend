@@ -48,7 +48,9 @@ from app.core.dependencies import (
 from app.core.security import create_access_token, create_refresh_token, decode_token
 from app.freelancer.routes import router as freelancer_router
 from app.influencer.routes import router as influencer_router
+from app.message.calls import router as calls_router
 from app.message.routes import router as message_router
+from app.profile.routes import router as profile_router
 from app.superadmin.routes import router as superadmin_router
 from app.story.routes import router as story_router
 from app.story.settings_routes import router as story_settings_router
@@ -577,48 +579,13 @@ routers = [
     story_router,
     story_settings_router,
     message_router,
+    calls_router,
+    profile_router,
     admin_router,
     influencer_router,
     freelancer_router,
     superadmin_router,
 ]
-
-for r in routers:
-    app.include_router(r, prefix=settings.API_V1_PREFIX)
-    app.include_router(r, prefix="/api")
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 for r in routers:
     app.include_router(r, prefix=settings.API_V1_PREFIX)

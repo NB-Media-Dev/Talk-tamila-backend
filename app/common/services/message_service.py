@@ -18,6 +18,7 @@ from app.common.models.messaging import (
     DirectMessage,
     MessageReaction,
 )
+from app.common.models.moderation import ChatMute, UserBlock, UserReport
 from app.common.models.social import Follow
 from app.common.models.story import Story
 from app.common.models.user import User
@@ -147,6 +148,36 @@ class MessageService:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "User not found")
         return other
 
+    # ---------- block / mute helpers ----------
+    @staticmethod
+    def _block_state(db: Session, me_id: int, other_id: int) -> Dict[str, bool]:
+        """blocked_by_me: I blocked them. blocked_me: they blocked me."""
+        rows = db.execute(
+            select(UserBlock.blocker_id).where(
+                or_(
+                    and_(UserBlock.blocker_id == me_id, UserBlock.blocked_id == other_id),
+                    and_(UserBlock.blocker_id == other_id, UserBlock.blocked_id == me_id),
+                )
+            )
+        ).scalars().all()
+        return {"blocked_by_me": me_id in rows, "blocked_me": other_id in rows}
+
+    @staticmethod
+    def is_blocked_between(db: Session, a_id: int, b_id: int) -> bool:
+        state = MessageService._block_state(db, a_id, b_id)
+        return state["blocked_by_me"] or state["blocked_me"]
+
+    @staticmethod
+    def _is_muted(db: Session, me_id: int, other_id: int) -> bool:
+        return (
+            db.execute(
+                select(ChatMute.id).where(
+                    ChatMute.user_id == me_id, ChatMute.partner_id == other_id
+                )
+            ).first()
+            is not None
+        )
+
     # ---------- per-viewer chat state (delete chat / mark unread) ----------
     @staticmethod
     def _chat_state_map(db: Session, me_id: int, partner_ids: List[int]) -> Dict[int, ChatState]:
@@ -185,9 +216,12 @@ class MessageService:
                 or_(DirectMessage.sender_id == me.user_id, DirectMessage.receiver_id == me.user_id)
             )
         ).scalar()
+        muted_ids = select(ChatMute.partner_id).where(ChatMute.user_id == me.user_id)
         unread = db.execute(
             select(func.count(func.distinct(DirectMessage.sender_id))).where(
-                DirectMessage.receiver_id == me.user_id, DirectMessage.read_at.is_(None)
+                DirectMessage.receiver_id == me.user_id,
+                DirectMessage.read_at.is_(None),
+                DirectMessage.sender_id.not_in(muted_ids),
             )
         ).scalar()
         return {"latest_message_id": int(latest or 0), "unread_conversations": int(unread or 0)}
@@ -343,6 +377,8 @@ class MessageService:
         partner_card = None
         if after_id is None and before_id is None:
             partner_card = _user_card(other, MessageService._following_ids(db, me.user_id, [other_id]))
+            partner_card.update(MessageService._block_state(db, me.user_id, other_id))
+            partner_card["muted"] = MessageService._is_muted(db, me.user_id, other_id)
 
         reactions_sync: Optional[Dict[int, List[Dict[str, Any]]]] = None
         existing_ids: Optional[List[int]] = None
@@ -369,6 +405,11 @@ class MessageService:
     @staticmethod
     def send(db: Session, me: User, other_id: int, body: str) -> Dict[str, Any]:
         MessageService._get_partner(db, me, other_id)
+        state = MessageService._block_state(db, me.user_id, other_id)
+        if state["blocked_by_me"]:
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "You blocked this user. Unblock them to send a message.")
+        if state["blocked_me"]:
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "You can't send messages to this user.")
         msg = DirectMessage(sender_id=me.user_id, receiver_id=other_id, body=body)
         db.add(msg)
         db.commit()
@@ -410,6 +451,59 @@ class MessageService:
         state = MessageService._get_or_create_chat_state(db, me.user_id, other_id)
         state.cleared_before_id = max(state.cleared_before_id, latest_id)
         state.manually_unread = False
+        db.commit()
+        return {"success": True}
+
+    # ---------- block / unblock / mute / report (chat header 3-dot menu) ----------
+    @staticmethod
+    def block(db: Session, me: User, other_id: int) -> Dict[str, Any]:
+        MessageService._get_partner(db, me, other_id)
+        exists = db.execute(
+            select(UserBlock.id).where(
+                UserBlock.blocker_id == me.user_id, UserBlock.blocked_id == other_id
+            )
+        ).first()
+        if exists is None:
+            db.add(UserBlock(blocker_id=me.user_id, blocked_id=other_id))
+            try:
+                db.commit()
+            except IntegrityError:
+                db.rollback()  # blocked twice at the same moment - already blocked
+        return {"success": True, "blocked": True}
+
+    @staticmethod
+    def unblock(db: Session, me: User, other_id: int) -> Dict[str, Any]:
+        db.execute(
+            delete(UserBlock).where(
+                UserBlock.blocker_id == me.user_id, UserBlock.blocked_id == other_id
+            )
+        )
+        db.commit()
+        return {"success": True, "blocked": False}
+
+    @staticmethod
+    def mute(db: Session, me: User, other_id: int) -> Dict[str, Any]:
+        MessageService._get_partner(db, me, other_id)
+        if not MessageService._is_muted(db, me.user_id, other_id):
+            db.add(ChatMute(user_id=me.user_id, partner_id=other_id))
+            try:
+                db.commit()
+            except IntegrityError:
+                db.rollback()
+        return {"success": True, "muted": True}
+
+    @staticmethod
+    def unmute(db: Session, me: User, other_id: int) -> Dict[str, Any]:
+        db.execute(
+            delete(ChatMute).where(ChatMute.user_id == me.user_id, ChatMute.partner_id == other_id)
+        )
+        db.commit()
+        return {"success": True, "muted": False}
+
+    @staticmethod
+    def report(db: Session, me: User, other_id: int, reason: str) -> Dict[str, Any]:
+        MessageService._get_partner(db, me, other_id)
+        db.add(UserReport(reporter_id=me.user_id, reported_id=other_id, reason=(reason or "").strip()[:500]))
         db.commit()
         return {"success": True}
 

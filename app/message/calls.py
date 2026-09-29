@@ -23,7 +23,6 @@ from typing import Dict, Optional, Set
 from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
 from starlette.concurrency import run_in_threadpool
 
-from app.common.models.user import User
 from app.common.services.message_service import MessageService
 from app.core.database import SessionLocal
 from app.core.dependencies import _user_from_access_token
@@ -35,7 +34,45 @@ router = APIRouter(prefix="/calls", tags=["Calls"])
 RING_TIMEOUT_SECONDS = 45
 
 
-def _user_card(user: User) -> dict:
+@dataclass
+class CallUser:
+    """Plain snapshot of the logged-in user, taken while the DB session is still
+    open. The ORM `User` can't be used after `db.close()`: reading `avatar_url`
+    lazy-loads the profile and raises DetachedInstanceError, which is what broke
+    the "incoming call" card."""
+
+    user_id: int
+    username: str
+    full_name: str
+    avatar_url: Optional[str] = None
+
+
+# Avatars are stored as base64 data URLs and can be huge; don't push those through
+# the signaling socket - the ringing screen falls back to initials.
+_MAX_AVATAR_CHARS = 200_000
+
+
+def _snapshot_user(user) -> CallUser:
+    avatar = user.avatar_url
+    if avatar and len(avatar) > _MAX_AVATAR_CHARS:
+        avatar = None
+    return CallUser(
+        user_id=user.user_id,
+        username=user.username,
+        full_name=user.full_name,
+        avatar_url=avatar,
+    )
+
+
+def _is_blocked_pair(a_id: int, b_id: int) -> bool:
+    db = SessionLocal()
+    try:
+        return MessageService.is_blocked_between(db, a_id, b_id)
+    finally:
+        db.close()
+
+
+def _user_card(user: CallUser) -> dict:
     return {
         "user_id": user.user_id,
         "username": user.username,
@@ -112,7 +149,7 @@ class CallManager:
             await self._end(session, reason="disconnected")
 
     # ---------- incoming signaling messages ----------
-    async def handle_message(self, me: User, ws: WebSocket, message: dict) -> None:
+    async def handle_message(self, me: CallUser, ws: WebSocket, message: dict) -> None:
         mtype = message.get("type")
         if mtype == "invite":
             await self._handle_invite(me, ws, message)
@@ -127,7 +164,7 @@ class CallManager:
         elif mtype == "ping":
             await self._send(ws, {"type": "pong"})
 
-    async def _handle_invite(self, me: User, ws: WebSocket, message: dict) -> None:
+    async def _handle_invite(self, me: CallUser, ws: WebSocket, message: dict) -> None:
         try:
             to_id = int(message.get("to"))
         except (TypeError, ValueError):
@@ -135,6 +172,11 @@ class CallManager:
         if to_id == me.user_id:
             return
         media = message.get("media") if message.get("media") in ("audio", "video") else "audio"
+
+        # Blocked in either direction: it just looks like they can't be reached.
+        if await run_in_threadpool(_is_blocked_pair, me.user_id, to_id):
+            await self._send(ws, {"type": "unavailable", "call_id": None})
+            return
 
         if me.user_id in self.user_call:
             await self._send(ws, {"type": "error", "reason": "already_in_call"})
@@ -174,7 +216,7 @@ class CallManager:
         if session and not session.ended and session.answered_at is None:
             await self._end(session, reason="no_answer")
 
-    async def _handle_accept(self, me: User, ws: WebSocket, message: dict) -> None:
+    async def _handle_accept(self, me: CallUser, ws: WebSocket, message: dict) -> None:
         session = self.calls.get(message.get("call_id"))
         if session is None or session.callee_id != me.user_id or session.ended:
             return
@@ -185,7 +227,7 @@ class CallManager:
             session.timeout_task = None
         await self._send(session.caller_ws, {"type": "accepted", "call_id": session.call_id})
 
-    async def _relay(self, me: User, message: dict) -> None:
+    async def _relay(self, me: CallUser, message: dict) -> None:
         """Passes an SDP offer/answer or an ICE candidate straight through to the
         other side of the call - we never inspect the contents."""
         session = self.calls.get(message.get("call_id"))
@@ -197,7 +239,7 @@ class CallManager:
             target = session.caller_ws
         await self._send(target, message)
 
-    async def _handle_end(self, me: User, message: dict, reason: str) -> None:
+    async def _handle_end(self, me: CallUser, message: dict, reason: str) -> None:
         session = self.calls.get(message.get("call_id"))
         if session is None or me.user_id not in (session.caller_id, session.callee_id):
             return
@@ -265,7 +307,9 @@ async def calls_ws(websocket: WebSocket, token: str = Query(...)) -> None:
     access token travels as a query parameter instead: wss://.../calls/ws?token=..."""
     db = SessionLocal()
     try:
-        user = _user_from_access_token(db, token)
+        orm_user = _user_from_access_token(db, token)
+        # Copy everything we need while the session is open (see CallUser).
+        user = _snapshot_user(orm_user) if orm_user is not None else None
     finally:
         db.close()
 

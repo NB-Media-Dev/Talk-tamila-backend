@@ -11,6 +11,7 @@ from app.common.models.story import (
 from app.common.models.social import Profile, Notification, Follow, CloseFriend
 from app.common.models.music import MusicTrack
 from app.common.models.messaging import DirectMessage, MessageReaction
+from app.common.models.moderation import ChatMute, UserBlock, UserReport
 
 __all__ = [
     "User",
@@ -28,4 +29,7 @@ __all__ = [
     "MusicTrack",
     "DirectMessage",
     "MessageReaction",
+    "ChatMute",
+    "UserBlock",
+    "UserReport",
 ]

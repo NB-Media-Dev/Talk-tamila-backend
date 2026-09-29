@@ -1,6 +1,7 @@
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Query, status
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.common.models.user import User
@@ -9,6 +10,10 @@ from app.common.services.message_service import MessageService
 from app.core.dependencies import get_current_user, get_db
 
 router = APIRouter(prefix="/messages", tags=["Messages"])
+
+
+class ReportUserRequest(BaseModel):
+    reason: str = Field("", max_length=500)
 
 
 @router.get("/summary")
@@ -91,6 +96,54 @@ def delete_thread(
 ) -> dict:
     """Delete this chat for me only (Instagram-style). The other person keeps theirs."""
     return MessageService.delete_chat(db, current_user, user_id)
+
+
+@router.post("/thread/{user_id}/block")
+def block_user(
+    user_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    """Block this person: neither of you can message or call the other."""
+    return MessageService.block(db, current_user, user_id)
+
+
+@router.delete("/thread/{user_id}/block")
+def unblock_user(
+    user_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    return MessageService.unblock(db, current_user, user_id)
+
+
+@router.post("/thread/{user_id}/mute")
+def mute_chat(
+    user_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    """Mute this chat: it stops counting in the unread badge."""
+    return MessageService.mute(db, current_user, user_id)
+
+
+@router.delete("/thread/{user_id}/mute")
+def unmute_chat(
+    user_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    return MessageService.unmute(db, current_user, user_id)
+
+
+@router.post("/thread/{user_id}/report", status_code=status.HTTP_201_CREATED)
+def report_user(
+    user_id: int,
+    payload: ReportUserRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    return MessageService.report(db, current_user, user_id, payload.reason)
 
 
 @router.put("/{message_id}/reaction")
