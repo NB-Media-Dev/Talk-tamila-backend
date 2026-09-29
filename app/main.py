@@ -78,6 +78,7 @@ from app.core.dependencies import (
 from app.core.security import create_access_token, create_refresh_token, decode_token, verify_password, get_password_hash
 from app.freelancer.routes import router as freelancer_router
 from app.influencer.routes import router as influencer_router
+from app.message.routes import router as message_router
 from app.superadmin.routes import router as superadmin_router
 from app.story.routes import router as story_router
 from app.utils.seed import seed_db_data
@@ -117,6 +118,10 @@ async def lifespan(app: FastAPI):
                 "ALTER TABLE story_replies ADD COLUMN receiver_name VARCHAR(100) NULL",
                 "ALTER TABLE stories ADD COLUMN reply LONGTEXT NULL",
                 "ALTER TABLE profiles MODIFY COLUMN profile_pic_url LONGTEXT NULL",
+                "ALTER TABLE direct_messages ADD COLUMN kind VARCHAR(20) NOT NULL DEFAULT 'text'",
+                "ALTER TABLE direct_messages ADD COLUMN story_id INT NULL",
+                "ALTER TABLE direct_messages ADD CONSTRAINT fk_direct_messages_story "
+                "FOREIGN KEY (story_id) REFERENCES stories(story_id) ON DELETE SET NULL",
             ]:
                 try:
                     conn.execute(text(stmt))
@@ -588,6 +593,7 @@ routers = [
     auth_router,
     story_router,
     story_settings_router,
+    message_router,
     admin_router,
     influencer_router,
     freelancer_router,
