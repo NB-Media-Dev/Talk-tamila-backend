@@ -1,8 +1,7 @@
-
 from datetime import datetime, timezone
 from typing import Optional
 
-from sqlalchemy import DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.database import Base
@@ -12,11 +11,14 @@ def _utc_now_naive() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
-# What a DirectMessage represents. Plain chat is "text"; the other two are created
+# What a DirectMessage represents. Plain chat is "text"; the story kinds are created
 # automatically when someone replies to / reacts to a story, and link back via story_id.
+# "call" is a log entry created by the calls WebSocket when a call ends - its `body`
+# is a small JSON blob: {"media": "audio"|"video", "outcome": "...", "seconds": n}.
 MESSAGE_KIND_TEXT = "text"
 MESSAGE_KIND_STORY_REPLY = "story_reply"
 MESSAGE_KIND_STORY_REACTION = "story_reaction"
+MESSAGE_KIND_CALL = "call"
 
 
 class DirectMessage(Base):
@@ -67,3 +69,37 @@ class MessageReaction(Base):
     )
     emoji: Mapped[str] = mapped_column(String(32), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utc_now_naive, nullable=False)
+
+
+class ChatState(Base):
+    """Per-viewer state for a 1:1 chat - Instagram-style "delete chat" and "mark as
+    unread" without ever touching the other person's copy of the conversation.
+
+    This is a brand-new table, so it's created automatically by
+    Base.metadata.create_all() on startup - no ALTER TABLE migration needed.
+    """
+
+    __tablename__ = "chat_state"
+    __table_args__ = (
+        UniqueConstraint("user_id", "partner_id", name="uq_chat_state_user_partner"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.user_id", ondelete="CASCADE"), nullable=False
+    )
+    partner_id: Mapped[int] = mapped_column(
+        ForeignKey("users.user_id", ondelete="CASCADE"), nullable=False
+    )
+    # "Delete chat": hides every message with id <= this value, for user_id only.
+    # The other person's inbox/thread is completely unaffected.
+    cleared_before_id: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
+    # "Mark as unread" from the 3-dot menu: forces this row to look unread again in
+    # the inbox, without changing any message's real read_at (so the sender's "Seen"
+    # status doesn't change - same behavior as Instagram). Cleared when the thread
+    # is opened again.
+    manually_unread: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="0"
+    )

@@ -1,17 +1,20 @@
-
-"""Direct messaging: inbox, 1:1 threads, read receipts, reactions, people search."""
+"""Direct messaging: inbox, 1:1 threads, read receipts, reactions, unsend, delete
+chat, mark read/unread, call logging, and people search."""
+import json
 from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, List, Optional, Set
 
 from fastapi import HTTPException, status
-from sqlalchemy import and_, case, func, or_, select, update
+from sqlalchemy import and_, case, delete, func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.common.models.messaging import (
+    MESSAGE_KIND_CALL,
     MESSAGE_KIND_STORY_REACTION,
     MESSAGE_KIND_STORY_REPLY,
     MESSAGE_KIND_TEXT,
+    ChatState,
     DirectMessage,
     MessageReaction,
 )
@@ -144,6 +147,36 @@ class MessageService:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "User not found")
         return other
 
+    # ---------- per-viewer chat state (delete chat / mark unread) ----------
+    @staticmethod
+    def _chat_state_map(db: Session, me_id: int, partner_ids: List[int]) -> Dict[int, ChatState]:
+        if not partner_ids:
+            return {}
+        rows = db.execute(
+            select(ChatState).where(
+                ChatState.user_id == me_id, ChatState.partner_id.in_(partner_ids)
+            )
+        ).scalars().all()
+        return {r.partner_id: r for r in rows}
+
+    @staticmethod
+    def _get_chat_state(db: Session, me_id: int, partner_id: int) -> Optional[ChatState]:
+        return db.execute(
+            select(ChatState).where(
+                ChatState.user_id == me_id, ChatState.partner_id == partner_id
+            )
+        ).scalar_one_or_none()
+
+    @staticmethod
+    def _get_or_create_chat_state(db: Session, me_id: int, partner_id: int) -> ChatState:
+        state = MessageService._get_chat_state(db, me_id, partner_id)
+        if state is None:
+            state = ChatState(user_id=me_id, partner_id=partner_id, cleared_before_id=0, manually_unread=False)
+            db.add(state)
+            db.commit()
+            db.refresh(state)
+        return state
+
     # ---------- cheap poll target ----------
     @staticmethod
     def summary(db: Session, me: User) -> Dict[str, int]:
@@ -162,14 +195,14 @@ class MessageService:
     # ---------- inbox ----------
     @staticmethod
     def conversations(db: Session, me: User, limit: int = 100) -> List[Dict[str, Any]]:
-        partner_id = case(
+        partner_id_expr = case(
             (DirectMessage.sender_id == me.user_id, DirectMessage.receiver_id),
             else_=DirectMessage.sender_id,
         )
         latest = (
             select(func.max(DirectMessage.id).label("mid"))
             .where(or_(DirectMessage.sender_id == me.user_id, DirectMessage.receiver_id == me.user_id))
-            .group_by(partner_id)
+            .group_by(partner_id_expr)
             .subquery()
         )
         last_messages = db.execute(
@@ -181,16 +214,23 @@ class MessageService:
         if not last_messages:
             return []
 
-        unread_rows = db.execute(
-            select(DirectMessage.sender_id, func.count(DirectMessage.id))
-            .where(DirectMessage.receiver_id == me.user_id, DirectMessage.read_at.is_(None))
-            .group_by(DirectMessage.sender_id)
-        ).all()
-        unread = {sender: count for sender, count in unread_rows}
-
         partner_ids = [
             m.receiver_id if m.sender_id == me.user_id else m.sender_id for m in last_messages
         ]
+        chat_states = MessageService._chat_state_map(db, me.user_id, partner_ids)
+
+        # Count unread messages per partner, ignoring anything hidden by "delete chat".
+        unread_id_rows = db.execute(
+            select(DirectMessage.sender_id, DirectMessage.id).where(
+                DirectMessage.receiver_id == me.user_id, DirectMessage.read_at.is_(None)
+            )
+        ).all()
+        unread_counts: Dict[int, int] = {}
+        for sender_id, mid in unread_id_rows:
+            threshold = chat_states[sender_id].cleared_before_id if sender_id in chat_states else 0
+            if mid > threshold:
+                unread_counts[sender_id] = unread_counts.get(sender_id, 0) + 1
+
         users = {
             u.user_id: u
             for u in db.execute(select(User).where(User.user_id.in_(partner_ids))).scalars().all()
@@ -202,6 +242,15 @@ class MessageService:
             partner = users.get(pid)
             if partner is None or not partner.is_active:
                 continue
+
+            state = chat_states.get(pid)
+            cleared_before_id = state.cleared_before_id if state else 0
+            if m.id <= cleared_before_id:
+                continue  # this conversation was deleted-for-me and nothing new has arrived since
+
+            unread_count = unread_counts.get(pid, 0)
+            manually_unread = bool(state.manually_unread) if state else False
+
             result.append(
                 {
                     "partner": _user_card(partner, following),
@@ -213,7 +262,8 @@ class MessageService:
                         "is_mine": m.sender_id == me.user_id,
                         "read_at": _iso(m.read_at),
                     },
-                    "unread_count": int(unread.get(pid, 0)),
+                    "unread_count": unread_count,
+                    "is_unread": unread_count > 0 or manually_unread,
                 }
             )
         return result
@@ -237,6 +287,18 @@ class MessageService:
             and_(DirectMessage.sender_id == me.user_id, DirectMessage.receiver_id == other_id),
             and_(DirectMessage.sender_id == other_id, DirectMessage.receiver_id == me.user_id),
         )
+
+        # "Delete chat" only hides history for the person who deleted it.
+        state = MessageService._get_chat_state(db, me.user_id, other_id)
+        cleared_before_id = state.cleared_before_id if state else 0
+        if cleared_before_id:
+            pair = and_(pair, DirectMessage.id > cleared_before_id)
+
+        # Opening the full thread (not a "load older"/poll request) clears any
+        # "mark as unread" flag, same as Instagram.
+        if after_id is None and before_id is None and state is not None and state.manually_unread:
+            state.manually_unread = False
+            db.commit()
 
         has_more = False
         if after_id is not None:
@@ -283,10 +345,13 @@ class MessageService:
             partner_card = _user_card(other, MessageService._following_ids(db, me.user_id, [other_id]))
 
         reactions_sync: Optional[Dict[int, List[Dict[str, Any]]]] = None
+        existing_ids: Optional[List[int]] = None
         if sync_from_id is not None:
             in_range = db.execute(
                 select(DirectMessage.id).where(pair, DirectMessage.id >= sync_from_id)
             ).scalars().all()
+            # Lets the client drop messages that were unsent since its last poll.
+            existing_ids = [int(mid) for mid in in_range]
             found = _load_reactions(db, in_range)
             # Every message in range gets an entry (possibly empty) so removals propagate.
             reactions_sync = {mid: found.get(mid, []) for mid in in_range}
@@ -297,6 +362,7 @@ class MessageService:
             "has_more": has_more,
             "last_read_by_other_id": int(last_read) if last_read else None,
             "reactions_sync": reactions_sync,
+            "existing_ids": existing_ids,
         }
 
     # ---------- send ----------
@@ -308,6 +374,88 @@ class MessageService:
         db.commit()
         db.refresh(msg)
         return _message_dict(msg, me.user_id)
+
+    # ---------- unsend ----------
+    @staticmethod
+    def unsend(db: Session, me: User, message_id: int) -> Dict[str, Any]:
+        """Delete a message I sent, for both people (Instagram-style Unsend)."""
+        msg = db.get(DirectMessage, message_id)
+        # 404 (not 403) for messages outside my own chats, so ids can't be probed.
+        if msg is None or me.user_id not in (msg.sender_id, msg.receiver_id):
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Message not found")
+        if msg.sender_id != me.user_id:
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "You can only unsend your own messages")
+
+        # Reactions are removed explicitly so this also works if the DB foreign key
+        # was created without ON DELETE CASCADE.
+        db.execute(delete(MessageReaction).where(MessageReaction.message_id == message_id))
+        db.delete(msg)
+        db.commit()
+        return {"success": True, "message_id": message_id}
+
+    # ---------- delete chat (for me only) ----------
+    @staticmethod
+    def delete_chat(db: Session, me: User, other_id: int) -> Dict[str, Any]:
+        """Instagram-style "Delete chat": clears the conversation out of my inbox
+        and thread history. The other person's copy is completely untouched, and if
+        they (or I) send a new message later, the chat simply reappears with just
+        the messages from that point on."""
+        MessageService._get_partner(db, me, other_id)
+        pair = or_(
+            and_(DirectMessage.sender_id == me.user_id, DirectMessage.receiver_id == other_id),
+            and_(DirectMessage.sender_id == other_id, DirectMessage.receiver_id == me.user_id),
+        )
+        latest_id = db.execute(select(func.max(DirectMessage.id)).where(pair)).scalar() or 0
+
+        state = MessageService._get_or_create_chat_state(db, me.user_id, other_id)
+        state.cleared_before_id = max(state.cleared_before_id, latest_id)
+        state.manually_unread = False
+        db.commit()
+        return {"success": True}
+
+    # ---------- mark read / unread (3-dot menu on the inbox row) ----------
+    @staticmethod
+    def mark_read(db: Session, me: User, other_id: int) -> Dict[str, Any]:
+        MessageService._get_partner(db, me, other_id)
+        db.execute(
+            update(DirectMessage)
+            .where(
+                DirectMessage.sender_id == other_id,
+                DirectMessage.receiver_id == me.user_id,
+                DirectMessage.read_at.is_(None),
+            )
+            .values(read_at=_utc_now_naive())
+        )
+        state = MessageService._get_or_create_chat_state(db, me.user_id, other_id)
+        state.manually_unread = False
+        db.commit()
+        return {"success": True}
+
+    @staticmethod
+    def mark_unread(db: Session, me: User, other_id: int) -> Dict[str, Any]:
+        """Flags the inbox row as unread without touching real read receipts, so the
+        other person's "Seen" status is not affected - matches Instagram's behavior."""
+        MessageService._get_partner(db, me, other_id)
+        state = MessageService._get_or_create_chat_state(db, me.user_id, other_id)
+        state.manually_unread = True
+        db.commit()
+        return {"success": True}
+
+    # ---------- call log entries (written by the calls WebSocket) ----------
+    @staticmethod
+    def log_call(
+        db: Session, caller_id: int, callee_id: int, media: str, outcome: str, seconds: int
+    ) -> Dict[str, Any]:
+        """Drop a call record into the chat as a message, same as Instagram's call
+        bubbles ("Missed video call", "Call ended · 3:12", etc)."""
+        body = json.dumps({"media": media, "outcome": outcome, "seconds": seconds})
+        msg = DirectMessage(
+            sender_id=caller_id, receiver_id=callee_id, body=body, kind=MESSAGE_KIND_CALL
+        )
+        db.add(msg)
+        db.commit()
+        db.refresh(msg)
+        return _message_dict(msg, caller_id)
 
     # ---------- story replies / reactions arrive as messages ----------
     @staticmethod

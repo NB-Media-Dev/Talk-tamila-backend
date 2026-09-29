@@ -63,6 +63,36 @@ def send_message(
     return MessageService.send(db, current_user, user_id, payload.body)
 
 
+@router.post("/thread/{user_id}/read")
+def mark_thread_read(
+    user_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    """Mark this conversation as read from the inbox 3-dot menu (no need to open it)."""
+    return MessageService.mark_read(db, current_user, user_id)
+
+
+@router.post("/thread/{user_id}/unread")
+def mark_thread_unread(
+    user_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    """Mark this conversation as unread from the inbox 3-dot menu."""
+    return MessageService.mark_unread(db, current_user, user_id)
+
+
+@router.delete("/thread/{user_id}")
+def delete_thread(
+    user_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    """Delete this chat for me only (Instagram-style). The other person keeps theirs."""
+    return MessageService.delete_chat(db, current_user, user_id)
+
+
 @router.put("/{message_id}/reaction")
 def react_to_message(
     message_id: int,
@@ -81,3 +111,13 @@ def remove_message_reaction(
     db: Session = Depends(get_db),
 ) -> dict:
     return MessageService.unreact(db, current_user, message_id)
+
+
+@router.delete("/{message_id}")
+def unsend_message(
+    message_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    """Unsend (delete for everyone) a message I sent."""
+    return MessageService.unsend(db, current_user, message_id)
