@@ -17,11 +17,17 @@ from app.common.models.messaging import (
     ChatState,
     DirectMessage,
     MessageReaction,
+    MessageRequestAccept,
 )
 from app.common.models.moderation import ChatMute, UserBlock, UserReport
 from app.common.models.social import Follow
 from app.common.models.story import Story
 from app.common.models.user import User
+
+
+# How many messages someone can send to a person who has NOT accepted their request
+# (Instagram allows 1). Change this number if you want to allow more.
+MAX_REQUEST_MESSAGES = 1
 
 
 def _utc_now_naive() -> datetime:
@@ -139,6 +145,105 @@ class MessageService:
         ).scalars().all()
         return set(rows)
 
+    # ---------- message requests (Instagram-style) ----------
+    @staticmethod
+    def _request_partner_ids(db: Session, me_id: int, partner_ids: Iterable[int]) -> Set[int]:
+        """Which of `partner_ids` are a *message request* from MY point of view.
+
+        A chat is a normal chat for me when ANY of these is true:
+          - we follow each other (mutual follow)
+          - I accepted their request
+          - I have sent them a message myself (replying counts as accepting)
+        Otherwise everything they send me sits in my Requests tab.
+        """
+        ids = list({int(p) for p in partner_ids if p and p != me_id})
+        if not ids:
+            return set()
+
+        i_follow = set(
+            db.execute(
+                select(Follow.following_id).where(
+                    Follow.follower_id == me_id, Follow.following_id.in_(ids)
+                )
+            ).scalars().all()
+        )
+        follow_me = set(
+            db.execute(
+                select(Follow.follower_id).where(
+                    Follow.following_id == me_id, Follow.follower_id.in_(ids)
+                )
+            ).scalars().all()
+        )
+        mutual = i_follow & follow_me
+
+        accepted = set(
+            db.execute(
+                select(MessageRequestAccept.partner_id).where(
+                    MessageRequestAccept.user_id == me_id,
+                    MessageRequestAccept.partner_id.in_(ids),
+                )
+            ).scalars().all()
+        )
+        i_sent = set(
+            db.execute(
+                select(DirectMessage.receiver_id)
+                .where(
+                    DirectMessage.sender_id == me_id,
+                    DirectMessage.receiver_id.in_(ids),
+                    DirectMessage.kind != MESSAGE_KIND_CALL,
+                )
+                .distinct()
+            ).scalars().all()
+        )
+        return {pid for pid in ids if pid not in mutual and pid not in accepted and pid not in i_sent}
+
+    @staticmethod
+    def request_state(db: Session, me_id: int, other_id: int) -> Dict[str, Any]:
+        """Small block sent with every thread response so the chat screen knows whether
+        to show the Accept / Delete / Block bar, or the "request sent" notice.
+
+        is_request   - THEY are asking to message ME and I have not accepted yet.
+        request_sent - I am messaging someone who has not accepted me yet.
+        can_send     - False once I used up my allowed messages while waiting.
+        """
+        is_request = other_id in MessageService._request_partner_ids(db, me_id, [other_id])
+        request_sent = me_id in MessageService._request_partner_ids(db, other_id, [me_id])
+        can_send = True
+        if request_sent:
+            # Only count messages I can still see. If I used "Delete chat", those old
+            # messages are hidden from me, so they must not lock me out of a chat that
+            # now looks empty.
+            my_state = MessageService._get_chat_state(db, me_id, other_id)
+            cleared_before_id = my_state.cleared_before_id if my_state else 0
+            sent = db.execute(
+                select(func.count(DirectMessage.id)).where(
+                    DirectMessage.sender_id == me_id,
+                    DirectMessage.receiver_id == other_id,
+                    DirectMessage.kind != MESSAGE_KIND_CALL,
+                    DirectMessage.id > cleared_before_id,
+                )
+            ).scalar() or 0
+            can_send = sent < MAX_REQUEST_MESSAGES
+        return {"is_request": is_request, "request_sent": request_sent, "can_send": can_send}
+
+    @staticmethod
+    def accept_request(db: Session, me: User, other_id: int) -> Dict[str, Any]:
+        """Accept a message request: the chat moves from Requests to the main inbox."""
+        MessageService._get_partner(db, me, other_id)
+        exists = db.execute(
+            select(MessageRequestAccept.id).where(
+                MessageRequestAccept.user_id == me.user_id,
+                MessageRequestAccept.partner_id == other_id,
+            )
+        ).first()
+        if exists is None:
+            db.add(MessageRequestAccept(user_id=me.user_id, partner_id=other_id))
+            try:
+                db.commit()
+            except IntegrityError:
+                db.rollback()  # accepted twice at the same moment - already accepted
+        return {"success": True, "accepted": True}
+
     @staticmethod
     def _get_partner(db: Session, me: User, other_id: int) -> User:
         if other_id == me.user_id:
@@ -217,14 +322,30 @@ class MessageService:
             )
         ).scalar()
         muted_ids = select(ChatMute.partner_id).where(ChatMute.user_id == me.user_id)
-        unread = db.execute(
-            select(func.count(func.distinct(DirectMessage.sender_id))).where(
+        unread_rows = db.execute(
+            select(DirectMessage.sender_id, DirectMessage.id).where(
                 DirectMessage.receiver_id == me.user_id,
                 DirectMessage.read_at.is_(None),
                 DirectMessage.sender_id.not_in(muted_ids),
             )
-        ).scalar()
-        return {"latest_message_id": int(latest or 0), "unread_conversations": int(unread or 0)}
+        ).all()
+
+        # Ignore anything hidden by "delete chat".
+        senders = list({sid for sid, _ in unread_rows})
+        states = MessageService._chat_state_map(db, me.user_id, senders)
+        unread_senders = {
+            sid
+            for sid, mid in unread_rows
+            if mid > (states[sid].cleared_before_id if sid in states else 0)
+        }
+
+        # Requests are counted separately so they don't inflate the navbar badge.
+        request_ids = MessageService._request_partner_ids(db, me.user_id, unread_senders)
+        return {
+            "latest_message_id": int(latest or 0),
+            "unread_conversations": len(unread_senders - request_ids),
+            "request_unread": len(request_ids),
+        }
 
     # ---------- inbox ----------
     @staticmethod
@@ -270,6 +391,7 @@ class MessageService:
             for u in db.execute(select(User).where(User.user_id.in_(partner_ids))).scalars().all()
         }
         following = MessageService._following_ids(db, me.user_id, partner_ids)
+        request_ids = MessageService._request_partner_ids(db, me.user_id, partner_ids)
 
         result: List[Dict[str, Any]] = []
         for m, pid in zip(last_messages, partner_ids):
@@ -298,6 +420,8 @@ class MessageService:
                     },
                     "unread_count": unread_count,
                     "is_unread": unread_count > 0 or manually_unread,
+                    # True = not a mutual follow and not accepted yet -> shown in Requests.
+                    "is_request": pid in request_ids,
                 }
             )
         return result
@@ -350,16 +474,21 @@ class MessageService:
             has_more = len(rows) > limit
             rows = list(reversed(rows[:limit]))
 
-        # Opening/polling the thread marks the other person's messages as seen.
-        marked = db.execute(
-            update(DirectMessage)
-            .where(
-                DirectMessage.sender_id == other_id,
-                DirectMessage.receiver_id == me.user_id,
-                DirectMessage.read_at.is_(None),
-            )
-            .values(read_at=_utc_now_naive())
-        ).rowcount
+        request = MessageService.request_state(db, me.user_id, other_id)
+
+        # Opening/polling the thread marks the other person's messages as seen - except
+        # for a pending request: like Instagram, they can't tell you looked until you accept.
+        marked = 0
+        if not request["is_request"]:
+            marked = db.execute(
+                update(DirectMessage)
+                .where(
+                    DirectMessage.sender_id == other_id,
+                    DirectMessage.receiver_id == me.user_id,
+                    DirectMessage.read_at.is_(None),
+                )
+                .values(read_at=_utc_now_naive())
+            ).rowcount
         if marked:
             db.commit()
             for m in rows:  # reflect the update in what we return
@@ -399,6 +528,7 @@ class MessageService:
             "last_read_by_other_id": int(last_read) if last_read else None,
             "reactions_sync": reactions_sync,
             "existing_ids": existing_ids,
+            "request": request,
         }
 
     # ---------- send ----------
@@ -410,6 +540,16 @@ class MessageService:
             raise HTTPException(status.HTTP_403_FORBIDDEN, "You blocked this user. Unblock them to send a message.")
         if state["blocked_me"]:
             raise HTTPException(status.HTTP_403_FORBIDDEN, "You can't send messages to this user.")
+
+        # Message requests: if they don't follow me back (and haven't accepted me), my
+        # message goes to THEIR Requests tab, and I only get a few until they accept.
+        req = MessageService.request_state(db, me.user_id, other_id)
+        if req["request_sent"] and not req["can_send"]:
+            raise HTTPException(
+                status.HTTP_403_FORBIDDEN,
+                "Your message request is waiting. You can send more once they accept it.",
+            )
+
         msg = DirectMessage(sender_id=me.user_id, receiver_id=other_id, body=body)
         db.add(msg)
         db.commit()

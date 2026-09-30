@@ -88,6 +88,16 @@ def mark_thread_unread(
     return MessageService.mark_unread(db, current_user, user_id)
 
 
+@router.post("/thread/{user_id}/accept")
+def accept_message_request(
+    user_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    """Accept a message request: the chat moves from Requests to the main inbox."""
+    return MessageService.accept_request(db, current_user, user_id)
+
+
 @router.delete("/thread/{user_id}")
 def delete_thread(
     user_id: int,

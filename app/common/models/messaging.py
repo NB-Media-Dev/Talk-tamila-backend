@@ -103,3 +103,31 @@ class ChatState(Base):
     manually_unread: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False, server_default="0"
     )
+
+
+class MessageRequestAccept(Base):
+    """Instagram-style "message requests".
+
+    Two people who follow each other chat directly. When someone who is NOT a mutual
+    follow messages you, the chat lands in your Requests tab. Tapping Accept adds one
+    row here (user_id = you, partner_id = them) and the chat moves to your main inbox.
+
+    This is a brand-new table, so Base.metadata.create_all() creates it on startup -
+    no ALTER TABLE migration needed.
+    """
+
+    __tablename__ = "message_request_accepts"
+    __table_args__ = (
+        UniqueConstraint("user_id", "partner_id", name="uq_message_request_accepts_user_partner"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    # The person who accepted (the receiver of the request).
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.user_id", ondelete="CASCADE"), nullable=False
+    )
+    # The person whose request was accepted (the sender).
+    partner_id: Mapped[int] = mapped_column(
+        ForeignKey("users.user_id", ondelete="CASCADE"), nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utc_now_naive, nullable=False)
