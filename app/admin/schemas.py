@@ -44,6 +44,7 @@ class AdminReportItem(BaseModel):
     user_id: int
     reporter_username: Optional[str] = None
     reason: str
+    details: Optional[str] = None
     created_at: str
     story: Optional[AdminStoryItem] = None
     model_config = ConfigDict(from_attributes=True)

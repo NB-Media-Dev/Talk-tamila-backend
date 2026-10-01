@@ -119,6 +119,7 @@ async def lifespan(app: FastAPI):
                 "ALTER TABLE stories ADD COLUMN reply LONGTEXT NULL",
                 "ALTER TABLE profiles MODIFY COLUMN profile_pic_url LONGTEXT NULL",
                 "ALTER TABLE profiles ADD COLUMN username VARCHAR(100) NULL",
+                "ALTER TABLE story_reports ADD COLUMN details LONGTEXT NULL",
             ]:
                 try:
                     conn.execute(text(stmt))

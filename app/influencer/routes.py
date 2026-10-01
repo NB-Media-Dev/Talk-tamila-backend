@@ -30,6 +30,9 @@ def get_influencer_stories(
 def get_influencer_story_stats(
     current_user: User = Depends(get_current_influencer),
     db: Session = Depends(get_db),
+
+
+    
 ) -> StoryStatsResponse:
     from app.common.services.story_service import StoryService
     return StoryService.get_my_stats(current_user, db)

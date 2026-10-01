@@ -174,6 +174,19 @@ class AdminService:
             story_obj = db.get(Story, r.story_id)
             story_item = None
             if story_obj:
+                creator = db.get(User, story_obj.user_id)
+                creator_resp = None
+                if creator:
+                    creator_resp = StoryUserResponse(
+                        id=creator.id,
+                        user_id=creator.id,
+                        username=creator.username,
+                        avatar=getattr(creator, "profile_pic_url", None),
+                        avatar_url=getattr(creator, "profile_pic_url", None),
+                        full_name=creator.full_name,
+                        role=creator.role,
+                        verified=True,
+                    )
                 story_item = AdminStoryItem(
                     id=story_obj.story_id,
                     story_id=story_obj.story_id,
@@ -188,6 +201,7 @@ class AdminService:
                     expires_at=_format_iso(story_obj.expires_at) if story_obj.expires_at else None,
                     is_deleted=story_obj.is_deleted,
                     is_active=not story_obj.is_deleted,
+                    user=creator_resp,
                 )
 
             results.append(
@@ -197,6 +211,7 @@ class AdminService:
                     user_id=r.user_id,
                     reporter_username=reporter_uname,
                     reason=r.reason,
+                    details=getattr(r, "details", None),
                     created_at=_format_iso(r.created_at),
                     story=story_item,
                 )

@@ -1181,11 +1181,11 @@ class StoryService:
         if existing:
             return {"success": True, "message": "You've already reported this story.", "story_id": story_id}
 
-        combined_reason = f"{reason} - {details}" if details else reason
         report = StoryReport(
             story_id=story_id,
             user_id=current_user.id,
-            reason=combined_reason[:255],
+            reason=reason[:255] if reason else "Inappropriate content",
+            details=details,
             created_at=make_naive(utc_now()),
         )
         db.add(report)

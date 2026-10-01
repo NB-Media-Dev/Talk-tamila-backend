@@ -217,7 +217,11 @@ class StoryReport(Base):
     story_id: Mapped[int] = mapped_column(ForeignKey("stories.story_id", ondelete="CASCADE"), nullable=False)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.user_id", ondelete="CASCADE"), nullable=False)
     reason: Mapped[str] = mapped_column(String(255), nullable=False)
+    details: Mapped[str | None] = mapped_column(Text().with_variant(LONGTEXT, "mysql"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+    story: Mapped["Story"] = relationship("Story")
+    user: Mapped["User"] = relationship("User")
 
 
 class StoryMute(Base):
