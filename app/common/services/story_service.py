@@ -21,6 +21,8 @@ from app.common.models.story import (
     StoryView,
 )
 from app.common.models.user import User
+from app.common.models.messaging import MESSAGE_KIND_STORY_REACTION, MESSAGE_KIND_STORY_REPLY
+from app.common.services.message_service import MessageService
 from app.common.services.music_service import MusicService
 from app.common.schemas.story import (
     ActivityLiker,
@@ -958,6 +960,15 @@ class StoryService:
             )
             db.add(like)
             db.commit()
+
+            if story.user_id != current_user.id:
+                # A heart is a reaction: tell the owner and drop it into their inbox.
+                StoryService._notify_story_owner(
+                    db, story, "story_like", f"{current_user.username} liked your story"
+                )
+                StoryService._send_story_message(
+                    db, current_user.id, story, MESSAGE_KIND_STORY_REACTION, "\u2764\ufe0f"
+                )
         else:
             updated = False
             if (not existing.user_name or existing.user_name != owner_name) and owner_name:
@@ -968,21 +979,6 @@ class StoryService:
                 updated = True
             if updated:
                 db.commit()
-
-            if story.user_id != current_user.id:
-                try:
-                    notif = Notification(
-                        user_id=story.user_id,
-                        type="story_like",
-                        message=f"{current_user.username} liked your story",
-                        reference_id=story_id,
-                        is_read=False,
-                        created_at=make_naive(utc_now()),
-                    )
-                    db.add(notif)
-                    db.commit()
-                except Exception:
-                    db.rollback()
 
         likes_count = (
             db.query(func.count(func.distinct(StoryLike.user_id)))
@@ -1043,6 +1039,37 @@ class StoryService:
         }
 
     @staticmethod
+    def _send_story_message(db: Session, sender_id: int, story: Story, kind: str, body: str):
+        """Best effort: the reply/reaction itself is already saved, so a failure to
+        mirror it into chat is logged instead of failing the request."""
+        try:
+            return MessageService.send_story_message(
+                db, sender_id, story.user_id, story.story_id, kind, body
+            )
+        except Exception:
+            db.rollback()
+            logger.exception("Could not send story %s as a message (story_id=%s)", kind, story.story_id)
+            return None
+
+    @staticmethod
+    def _notify_story_owner(db: Session, story: Story, notif_type: str, message: str) -> None:
+        try:
+            db.add(
+                Notification(
+                    user_id=story.user_id,
+                    type=notif_type,
+                    message=message,
+                    reference_id=story.story_id,
+                    is_read=False,
+                    created_at=make_naive(utc_now()),
+                )
+            )
+            db.commit()
+        except Exception:
+            db.rollback()
+            logger.exception("Could not create %s notification (story_id=%s)", notif_type, story.story_id)
+
+    @staticmethod
     def comment_story(story_id: int, text: str, current_user: User, db: Session) -> dict:
         story = db.get(Story, story_id)
         if not story:
@@ -1087,6 +1114,11 @@ class StoryService:
                 db.commit()
             except Exception:
                 db.rollback()
+
+            # The reply also lands in the owner's inbox as a chat message.
+            StoryService._send_story_message(
+                db, current_user.id, story, MESSAGE_KIND_STORY_REPLY, text
+            )
 
         return {
             "success": True,
@@ -1708,7 +1740,6 @@ class StoryService:
         if not owner_name:
             owner_name = getattr(story, "username", None) or (story.owner.username if story.owner else None)
 
-        tag = f"react:{emoji}"
         existing = (
             db.query(StoryLike)
             .filter(
@@ -1718,33 +1749,34 @@ class StoryService:
             .first()
         )
         if not existing:
-            like = StoryLike(
-                story_id=story_id,
-                user_id=current_user.id,
-                user_name=owner_name,
-                liked_by=current_user.username,
-                liked_at=make_naive(utc_now()),
+            db.add(
+                StoryLike(
+                    story_id=story_id,
+                    user_id=current_user.id,
+                    user_name=owner_name,
+                    liked_by=current_user.username,
+                    liked_at=make_naive(utc_now()),
+                )
             )
-            db.add(like)
         else:
-            if (not existing.user_name or existing.user_name != owner_name) and owner_name:
+            if owner_name and existing.user_name != owner_name:
                 existing.user_name = owner_name
-            if not existing.liked_by or existing.liked_by != current_user.username:
+            if existing.liked_by != current_user.username:
                 existing.liked_by = current_user.username
-            if story.user_id != current_user.id:
-                try:
-                    notif = Notification(
-                        user_id=story.user_id,
-                        type="story_react",
-                        message=f"{current_user.username} reacted {emoji} to your story",
-                        reference_id=story_id,
-                        is_read=False,
-                        created_at=make_naive(utc_now()),
-                    )
-                    db.add(notif)
-                except Exception:
-                    pass
-            db.commit()
+        db.commit()
+
+        if story.user_id != current_user.id:
+            sent = StoryService._send_story_message(
+                db, current_user.id, story, MESSAGE_KIND_STORY_REACTION, emoji
+            )
+            # Only notify when a new reaction message went out, so repeat taps stay quiet.
+            if sent:
+                StoryService._notify_story_owner(
+                    db,
+                    story,
+                    "story_react",
+                    f"{current_user.username} reacted {emoji} to your story",
+                )
 
         return StoryReactResponse(
             success=True,

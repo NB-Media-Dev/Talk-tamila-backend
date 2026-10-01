@@ -1,12 +1,6 @@
-import json
 import re
-import app.core
-from app.story.routes import router as story_router
-from app.story.settings_routes import router as story_settings_router
-from app.common.schemas.auth import ForgotPasswordRequest, VerifyOtpRequest, ResetPasswordRequest
-from app.common.services.story_service import file_to_base64_data_url
 from contextlib import asynccontextmanager
-from typing import Any, Dict, List, Optional
+from typing import Optional
 
 from fastapi import (
     APIRouter,
@@ -17,7 +11,6 @@ from fastapi import (
     HTTPException,
     Query,
     Request,
-    Response,
     UploadFile,
     status,
 )
@@ -32,54 +25,35 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.admin.routes import router as admin_router
 from app.common.models import (
-    MusicTrack,
-    Notification,
-    Profile,
     Story,
     StoryLike,
     StoryReply,
-    StoryShare,
     StoryView,
     User,
 )
 from app.common.schemas.auth import (
-    LoginRequest,
+    ForgotPasswordRequest,
     RegisterRequest,
-    Token,
-    UserResponse,
-)
-from app.common.schemas.music import MusicTrackResponse
-from app.common.schemas.story import (
-    StoryActivityResponse,
-    StoryBatchResponse,
-    StoryGroupResponse,
-    StoryItemResponse,
-    StoryJsonCreateRequest,
-    StoryMuteResponse,
-    StoryPauseRequest,
-    StoryReplyRequest,
-    StoryReplyResponse,
-    StoryReportRequest,
-    StoryShareRequest,
-    StoryShareResponse,
-    StorySlideResponse,
+    ResetPasswordRequest,
+    VerifyOtpRequest,
 )
 from app.common.services.auth_service import AuthService
-from app.common.services.music_service import MusicService
-from app.common.services.story_service import StoryService
+from app.common.services.story_service import file_to_base64_data_url
 from app.core.config import settings
 from app.core.database import Base, engine, SessionLocal
 from app.core.dependencies import (
-    get_current_admin,
     get_current_user,
     get_db,
-    get_optional_current_user,
 )
-from app.core.security import create_access_token, create_refresh_token, decode_token, verify_password, get_password_hash
+from app.core.security import create_access_token, create_refresh_token, decode_token
 from app.freelancer.routes import router as freelancer_router
 from app.influencer.routes import router as influencer_router
+from app.message.calls import router as calls_router
+from app.message.routes import router as message_router
+from app.profile.routes import router as profile_router
 from app.superadmin.routes import router as superadmin_router
 from app.story.routes import router as story_router
+from app.story.settings_routes import router as story_settings_router
 from app.utils.seed import seed_db_data
 
 
@@ -119,7 +93,10 @@ async def lifespan(app: FastAPI):
                 "ALTER TABLE stories ADD COLUMN reply LONGTEXT NULL",
                 "ALTER TABLE profiles MODIFY COLUMN profile_pic_url LONGTEXT NULL",
                 "ALTER TABLE profiles ADD COLUMN username VARCHAR(100) NULL",
-                "ALTER TABLE story_reports ADD COLUMN details LONGTEXT NULL",
+                "ALTER TABLE direct_messages ADD COLUMN kind VARCHAR(20) NOT NULL DEFAULT 'text'",
+                "ALTER TABLE direct_messages ADD COLUMN story_id INT NULL",
+                "ALTER TABLE direct_messages ADD CONSTRAINT fk_direct_messages_story "
+                "FOREIGN KEY (story_id) REFERENCES stories(story_id) ON DELETE SET NULL",
             ]:
                 try:
                     conn.execute(text(stmt))
@@ -603,6 +580,9 @@ routers = [
     auth_router,
     story_router,
     story_settings_router,
+    message_router,
+    calls_router,
+    profile_router,
     admin_router,
     influencer_router,
     freelancer_router,
