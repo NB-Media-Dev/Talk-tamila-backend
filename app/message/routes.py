@@ -1,12 +1,16 @@
+import json
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Query, status
-from pydantic import BaseModel, Field
+from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Query, Request, status
+from pydantic import BaseModel, Field, ValidationError
 from sqlalchemy.orm import Session
 
 from app.common.models.user import User
 from app.common.schemas.messaging import MessageCreate, ReactionRequest
+from app.common.services import push_service
 from app.common.services.message_service import MessageService
+from app.common.services.push_service import PushService
+from app.core.config import settings
 from app.core.dependencies import get_current_user, get_db
 
 router = APIRouter(prefix="/messages", tags=["Messages"])
@@ -14,6 +18,20 @@ router = APIRouter(prefix="/messages", tags=["Messages"])
 
 class ReportUserRequest(BaseModel):
     reason: str = Field("", max_length=500)
+
+
+class PushKeys(BaseModel):
+    p256dh: str = Field(..., min_length=1, max_length=255)
+    auth: str = Field(..., min_length=1, max_length=255)
+
+
+class PushSubscribeRequest(BaseModel):
+    endpoint: str = Field(..., min_length=10, max_length=750)
+    keys: PushKeys
+
+
+class PushUnsubscribeRequest(BaseModel):
+    endpoint: str = Field(..., min_length=10, max_length=750)
 
 
 @router.get("/summary")
@@ -62,10 +80,17 @@ def get_thread(
 def send_message(
     user_id: int,
     payload: MessageCreate,
+    background_tasks: BackgroundTasks,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
+    x_push_endpoint: Optional[str] = Header(default=None),
 ) -> dict:
-    return MessageService.send(db, current_user, user_id, payload.body)
+    message = MessageService.send(db, current_user, user_id, payload.body)
+    # Instagram-style notification for the receiver. Runs after the response is sent,
+    # so sending a message never gets slower, and never fails because of a notification.
+    # x_push_endpoint = the sender's own browser, so it is never notified about its own message.
+    background_tasks.add_task(PushService.notify_new_message, message["id"], x_push_endpoint)
+    return message
 
 
 @router.post("/thread/{user_id}/read")
@@ -184,3 +209,45 @@ def unsend_message(
 ) -> dict:
     """Unsend (delete for everyone) a message I sent."""
     return MessageService.unsend(db, current_user, message_id)
+
+
+# ---------- message notifications (Web Push) ----------
+@router.get("/push/public-key")
+def push_public_key(current_user: User = Depends(get_current_user)) -> dict:
+    """The website asks this before offering "Turn on notifications"."""
+    return {
+        "enabled": push_service.is_configured(),
+        "public_key": settings.VAPID_PUBLIC_KEY if push_service.is_configured() else "",
+    }
+
+
+@router.post("/push/subscribe", status_code=status.HTTP_201_CREATED)
+def push_subscribe(
+    payload: PushSubscribeRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    """Save this browser so it receives message notifications for the logged-in user."""
+    if not push_service.is_configured():
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "Notifications are not set up on the server.")
+    if not push_service.is_allowed_endpoint(payload.endpoint):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Unsupported notification address.")
+    PushService.subscribe(db, current_user, payload.endpoint, payload.keys.p256dh, payload.keys.auth)
+    return {"success": True}
+
+
+@router.post("/push/unsubscribe")
+async def push_unsubscribe(request: Request, db: Session = Depends(get_db)) -> dict:
+    """Stop notifications for one browser (called when the person logs out).
+
+    Deliberately needs no login token: the website calls it with navigator.sendBeacon
+    at the moment of logout, when the token is already being thrown away. The
+    `endpoint` is a long private address only that browser and this server know, so it
+    works like a password for that one device and nothing else.
+    """
+    try:
+        raw = await request.body()
+        data = PushUnsubscribeRequest(**json.loads(raw or b"{}"))
+    except (ValueError, TypeError, ValidationError):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Invalid request.")
+    return {"success": True, "removed": PushService.unsubscribe(db, data.endpoint)}

@@ -37,6 +37,14 @@ class Settings(BaseSettings):
     # Brevo (transactional email) - used for OTP emails
     BREVO_API_KEY: str = ""
 
+    # Web Push (Instagram-style message notifications).
+    # Create the two keys once with:  python scripts/generate_vapid_keys.py
+    # Leave them empty and notifications are simply switched off.
+    VAPID_PUBLIC_KEY: str = ""
+    VAPID_PRIVATE_KEY: str = ""
+    # Must be "mailto:you@example.com" or an https:// address. Falls back to SMTP_FROM_EMAIL.
+    VAPID_SUBJECT: str = ""
+
     BACKEND_CORS_ORIGINS: Union[str, List[str]] = [
         "http://localhost:3000",
         "http://127.0.0.1:3000",

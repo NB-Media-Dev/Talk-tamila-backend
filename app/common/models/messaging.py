@@ -131,3 +131,33 @@ class MessageRequestAccept(Base):
         ForeignKey("users.user_id", ondelete="CASCADE"), nullable=False
     )
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utc_now_naive, nullable=False)
+
+
+class PushSubscription(Base):
+    """One browser/phone that agreed to receive message notifications for a user.
+
+    Instagram-style notifications: when someone sends you a message, the server pushes
+    a small notification to every device listed here, even if the website is closed.
+
+    `endpoint` is a long private URL the browser's push service gave us; it is unique
+    per browser. If a different person logs in on the same browser, the row simply
+    moves to them (see PushService.subscribe).
+
+    This is a brand-new table, so Base.metadata.create_all() creates it on startup -
+    no ALTER TABLE migration needed.
+    """
+
+    __tablename__ = "push_subscriptions"
+    __table_args__ = (
+        UniqueConstraint("endpoint", name="uq_push_subscriptions_endpoint"),
+        Index("ix_push_subscriptions_user_id", "user_id"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.user_id", ondelete="CASCADE"), nullable=False
+    )
+    endpoint: Mapped[str] = mapped_column(String(750), nullable=False)
+    p256dh: Mapped[str] = mapped_column(String(255), nullable=False)
+    auth: Mapped[str] = mapped_column(String(255), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utc_now_naive, nullable=False)

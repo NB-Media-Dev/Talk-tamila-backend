@@ -54,6 +54,7 @@ from app.profile.routes import router as profile_router
 from app.superadmin.routes import router as superadmin_router
 from app.story.routes import router as story_router
 from app.story.settings_routes import router as story_settings_router
+from app.utils.admin_bootstrap import ensure_admin_user
 from app.utils.seed import seed_db_data
 
 
@@ -108,6 +109,13 @@ async def lifespan(app: FastAPI):
         try:
             if settings.ENVIRONMENT.lower() != "production" and db.query(User).first() is None:
                 seed_db_data(db)
+        finally:
+            db.close()
+
+        # The built-in admin login must exist in every environment (also production).
+        db = SessionLocal()
+        try:
+            ensure_admin_user(db)
         finally:
             db.close()
     except Exception as e:
