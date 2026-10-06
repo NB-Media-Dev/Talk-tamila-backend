@@ -206,15 +206,30 @@ class MessageService:
         request_sent - I am messaging someone who has not accepted me yet.
         can_send     - False once I used up my allowed messages while waiting.
         """
+        my_state = MessageService._get_chat_state(db, me_id, other_id)
+        cleared_before_id = my_state.cleared_before_id if my_state else 0
+
         is_request = other_id in MessageService._request_partner_ids(db, me_id, [other_id])
+        if is_request:
+            # It is only a real request if THEY actually sent me a message that I can
+            # still see. Just opening a chat with someone (or starting one myself) must
+            # not show "Accept message request from ...?" on an empty thread.
+            they_sent = db.execute(
+                select(func.count(DirectMessage.id)).where(
+                    DirectMessage.sender_id == other_id,
+                    DirectMessage.receiver_id == me_id,
+                    DirectMessage.kind != MESSAGE_KIND_CALL,
+                    DirectMessage.id > cleared_before_id,
+                )
+            ).scalar() or 0
+            is_request = they_sent > 0
+
         request_sent = me_id in MessageService._request_partner_ids(db, other_id, [me_id])
         can_send = True
         if request_sent:
             # Only count messages I can still see. If I used "Delete chat", those old
             # messages are hidden from me, so they must not lock me out of a chat that
             # now looks empty.
-            my_state = MessageService._get_chat_state(db, me_id, other_id)
-            cleared_before_id = my_state.cleared_before_id if my_state else 0
             sent = db.execute(
                 select(func.count(DirectMessage.id)).where(
                     DirectMessage.sender_id == me_id,
