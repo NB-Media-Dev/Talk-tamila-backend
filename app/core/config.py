@@ -34,7 +34,7 @@ class Settings(BaseSettings):
     SMTP_FROM_EMAIL: str = ""
     SMTP_FROM_NAME: str = "Talk Tamila"
 
-    # Brevo (transactional email) - used for OTP emails
+
     BREVO_API_KEY: str = ""
 
     # Web Push (Instagram-style message notifications).
@@ -48,6 +48,7 @@ class Settings(BaseSettings):
     BACKEND_CORS_ORIGINS: Union[str, List[str]] = [
         "http://localhost:3000",
         "http://127.0.0.1:3000",
+        "http://192.168.0.72:3000",
         "http://192.168.0.45:3000",
         "http://localhost:5173",
         "https://talktamila-adminpanel-s8pg.vercel.app",

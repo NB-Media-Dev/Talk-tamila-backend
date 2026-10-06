@@ -47,8 +47,7 @@ class CallUser:
     avatar_url: Optional[str] = None
 
 
-# Avatars are stored as base64 data URLs and can be huge; don't push those through
-# the signaling socket - the ringing screen falls back to initials.
+
 _MAX_AVATAR_CHARS = 200_000
 
 
@@ -86,7 +85,7 @@ class CallSession:
     call_id: str
     caller_id: int
     callee_id: int
-    media: str  # "audio" | "video"
+    media: str 
     caller_ws: WebSocket
     callee_ws: Optional[WebSocket] = None
     created_at: float = field(default_factory=time.monotonic)
@@ -105,8 +104,7 @@ class CallManager:
         self.calls: Dict[str, CallSession] = {}
         self.user_call: Dict[int, str] = {}
         self._next_id = 0
-        # Keeps a reference to "fire and forget" DB-logging tasks so they aren't
-        # garbage-collected mid-flight, without ever blocking the signaling path.
+      
         self._background: Set["asyncio.Task[None]"] = set()
 
     def _new_call_id(self) -> str:
@@ -119,12 +117,12 @@ class CallManager:
         try:
             await ws.send_json(payload)
         except Exception:
-            pass  # the socket is already gone; the disconnect handler will clean up
+            pass  
 
     async def _send_user(self, user_id: int, payload: dict) -> None:
         await self._send(self.connections.get(user_id), payload)
 
-    # ---------- connection lifecycle ----------
+
     async def register(self, user_id: int, ws: WebSocket) -> None:
         """Only one live socket per user - a second tab/device takes over."""
         old = self.connections.get(user_id)
@@ -148,7 +146,7 @@ class CallManager:
         if session:
             await self._end(session, reason="disconnected")
 
-    # ---------- incoming signaling messages ----------
+
     async def handle_message(self, me: CallUser, ws: WebSocket, message: dict) -> None:
         mtype = message.get("type")
         if mtype == "invite":
@@ -173,7 +171,7 @@ class CallManager:
             return
         media = message.get("media") if message.get("media") in ("audio", "video") else "audio"
 
-        # Blocked in either direction: it just looks like they can't be reached.
+
         if await run_in_threadpool(_is_blocked_pair, me.user_id, to_id):
             await self._send(ws, {"type": "unavailable", "call_id": None})
             return
@@ -245,7 +243,7 @@ class CallManager:
             return
         await self._end(session, reason=reason)
 
-    # ---------- ending a call ----------
+
     async def _end(self, session: CallSession, reason: str) -> None:
         if session.ended:
             return
@@ -277,7 +275,7 @@ class CallManager:
         await self._send_user(session.callee_id, payload)
         await self._log_call_async(session.caller_id, session.callee_id, session.media, outcome, seconds)
 
-    # ---------- DB logging, kept off the signaling hot path ----------
+   
     async def _log_call_async(
         self, caller_id: int, callee_id: int, media: str, outcome: str, seconds: int
     ) -> None:
@@ -308,7 +306,7 @@ async def calls_ws(websocket: WebSocket, token: str = Query(...)) -> None:
     db = SessionLocal()
     try:
         orm_user = _user_from_access_token(db, token)
-        # Copy everything we need while the session is open (see CallUser).
+
         user = _snapshot_user(orm_user) if orm_user is not None else None
     finally:
         db.close()

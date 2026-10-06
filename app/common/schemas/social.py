@@ -26,7 +26,9 @@ class NotificationResponse(BaseModel):
     message: Optional[str] = None
     reference_id: Optional[int] = None
     is_read: bool = False
-    created_at: str
+    created_at: str 
+    actor_id: Optional[int] = None      
+    actor_username: Optional[str] = None 
 
     model_config = ConfigDict(from_attributes=True)
 

@@ -29,7 +29,7 @@ def get_public_profile(
     if user is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "User not found")
 
-    # Live counts straight from the follows table, same as GET /auth/profile.
+
     followers = db.query(Follow).filter(Follow.following_id == user.user_id).count()
     following = db.query(Follow).filter(Follow.follower_id == user.user_id).count()
 

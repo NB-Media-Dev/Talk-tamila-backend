@@ -38,6 +38,8 @@ from app.common.schemas.auth import (
     VerifyOtpRequest,
 )
 from app.common.services.auth_service import AuthService
+from app.common.services.notification_service import NotificationService
+from app.common.models.social import Notification
 from app.common.services.story_service import file_to_base64_data_url
 from app.core.config import settings
 from app.core.database import Base, engine, SessionLocal
@@ -84,6 +86,10 @@ async def lifespan(app: FastAPI):
                 "ALTER TABLE stories ADD COLUMN username VARCHAR(100) NULL",
                 "ALTER TABLE stories ADD COLUMN is_deleted BOOLEAN NOT NULL DEFAULT FALSE",
                 "ALTER TABLE stories ADD COLUMN deleted_at DATETIME NULL",
+                "ALTER TABLE stories ADD COLUMN parent_story_id INT NULL",
+                "ALTER TABLE stories ADD COLUMN original_story_id INT NULL",
+                "ALTER TABLE stories ADD COLUMN original_owner_id INT NULL",
+                "ALTER TABLE stories ADD COLUMN status VARCHAR(20) NOT NULL DEFAULT 'active'",
                 "ALTER TABLE story_views ADD COLUMN story_sender VARCHAR(100) NULL",
                 "ALTER TABLE story_views ADD COLUMN viewed_by VARCHAR(100) NULL",
                 "ALTER TABLE story_likes ADD COLUMN liked_by VARCHAR(100) NULL",
@@ -98,6 +104,28 @@ async def lifespan(app: FastAPI):
                 "ALTER TABLE direct_messages ADD COLUMN story_id INT NULL",
                 "ALTER TABLE direct_messages ADD CONSTRAINT fk_direct_messages_story "
                 "FOREIGN KEY (story_id) REFERENCES stories(story_id) ON DELETE SET NULL",
+                "CREATE TABLE IF NOT EXISTS story_mentions ("
+                "id INT AUTO_INCREMENT PRIMARY KEY, "
+                "story_id INT NOT NULL, "
+                "mentioned_user_id INT NOT NULL, "
+                "created_by_user_id INT NOT NULL, "
+                "x FLOAT NULL, "
+                "y FLOAT NULL, "
+                "created_at DATETIME DEFAULT CURRENT_TIMESTAMP, "
+                "INDEX idx_sm_story (story_id), "
+                "INDEX idx_sm_user (mentioned_user_id)"
+                ")",
+                "ALTER TABLE story_mentions ADD COLUMN id INT AUTO_INCREMENT PRIMARY KEY FIRST",
+                "ALTER TABLE story_mentions CHANGE COLUMN mention_id id INT AUTO_INCREMENT",
+                "ALTER TABLE story_mentions ADD COLUMN story_id INT NOT NULL",
+                "ALTER TABLE story_mentions ADD COLUMN mentioned_user_id INT NOT NULL",
+                "ALTER TABLE story_mentions CHANGE COLUMN user_id mentioned_user_id INT NOT NULL",
+                "ALTER TABLE story_mentions ADD COLUMN created_by_user_id INT NOT NULL DEFAULT 1",
+                "ALTER TABLE story_mentions ADD COLUMN owner_user_id INT NULL DEFAULT NULL",
+                "ALTER TABLE story_mentions MODIFY COLUMN owner_user_id INT NULL DEFAULT NULL",
+                "ALTER TABLE story_mentions ADD COLUMN x FLOAT NULL",
+                "ALTER TABLE story_mentions ADD COLUMN y FLOAT NULL",
+                "ALTER TABLE story_mentions ADD COLUMN created_at DATETIME DEFAULT CURRENT_TIMESTAMP",
             ]:
                 try:
                     conn.execute(text(stmt))
@@ -178,7 +206,7 @@ class ChangePasswordPayload(BaseModel):
 
 
 AVATAR_ALLOWED_TYPES = {"image/jpeg", "image/png", "image/webp"}
-AVATAR_MAX_DATA_URL_CHARS = 2_800_000  # about 2 MB of image data once base64-encoded
+AVATAR_MAX_DATA_URL_CHARS = 2_800_000 
 NAME_MAX_LENGTH = 100
 BIO_MAX_LENGTH = 300
 LOCATION_MAX_LENGTH = 100
@@ -336,7 +364,7 @@ async def update_profile(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> dict:
-    # ---- validate everything first, so a bad request changes nothing ----
+    
     if first_name is not None:
         first_name = first_name.strip()
         if not first_name:
@@ -396,7 +424,7 @@ async def update_profile(
         if len(avatar_data_url) > AVATAR_MAX_DATA_URL_CHARS:
             raise HTTPException(status_code=400, detail="Avatar must be 2 MB or smaller.")
 
-    # ---- apply ----
+  
     if first_name is not None:
         current_user.first_name = first_name
     if last_name is not None:
@@ -418,7 +446,7 @@ async def update_profile(
         if current_user.profile is not None:
             current_user.profile.username = username
 
-        # The story tables keep copies of the username as text, so update those too.
+
         my_story_ids = select(Story.story_id).where(Story.user_id == uid)
         db.query(Story).filter(Story.user_id == uid).update(
             {Story.username: username}, synchronize_session=False)
@@ -584,6 +612,65 @@ def reset_password_endpoint(payload: ResetPasswordRequest, db: Session = Depends
     AuthService.reset_password_with_otp(db, payload.identifier, payload.otp, payload.new_password)
     return {"success": True, "message": "Password reset successfully."}
 
+
+notification_router = APIRouter(prefix="/notifications", tags=["Notifications"])
+
+
+@notification_router.get("", summary="Get current user's notifications")
+def get_notifications(
+    limit: int = Query(default=20, ge=1, le=100),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    return NotificationService.get_user_notifications(current_user.user_id, db, limit)
+
+
+@notification_router.patch("/{notification_id}/read", summary="Mark a notification as read")
+def mark_notification_read(
+    notification_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    notif = db.query(Notification).filter(
+        Notification.id == notification_id,
+        Notification.user_id == current_user.user_id,
+    ).first()
+    if not notif:
+        raise HTTPException(status_code=404, detail="Notification not found.")
+    notif.is_read = True
+    db.commit()
+    return {"success": True}
+
+
+@notification_router.patch("/read-all", summary="Mark all notifications as read")
+def mark_all_notifications_read(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    db.query(Notification).filter(
+        Notification.user_id == current_user.user_id,
+        Notification.is_read == False,
+    ).update({"is_read": True})
+    db.commit()
+    return {"success": True}
+
+
+@notification_router.delete("/{notification_id}", summary="Delete a notification")
+def delete_notification(
+    notification_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    notif = db.query(Notification).filter(
+        Notification.id == notification_id,
+        Notification.user_id == current_user.user_id,
+    ).first()
+    if not notif:
+        raise HTTPException(status_code=404, detail="Notification not found.")
+    db.delete(notif)
+    db.commit()
+    return {"success": True}
+
 routers = [
     auth_router,
     story_router,
@@ -595,6 +682,7 @@ routers = [
     influencer_router,
     freelancer_router,
     superadmin_router,
+    notification_router,
 ]
 
 for r in routers:

@@ -11,10 +11,7 @@ def _utc_now_naive() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
-# What a DirectMessage represents. Plain chat is "text"; the story kinds are created
-# automatically when someone replies to / reacts to a story, and link back via story_id.
-# "call" is a log entry created by the calls WebSocket when a call ends - its `body`
-# is a small JSON blob: {"media": "audio"|"video", "outcome": "...", "seconds": n}.
+
 MESSAGE_KIND_TEXT = "text"
 MESSAGE_KIND_STORY_REPLY = "story_reply"
 MESSAGE_KIND_STORY_REACTION = "story_reaction"
@@ -41,12 +38,11 @@ class DirectMessage(Base):
     kind: Mapped[str] = mapped_column(
         String(20), default=MESSAGE_KIND_TEXT, server_default=MESSAGE_KIND_TEXT, nullable=False
     )
-    # Set for story_reply / story_reaction messages. The story may expire or be deleted
-    # later; SET NULL keeps the chat message and the API reports the story as unavailable.
+
     story_id: Mapped[Optional[int]] = mapped_column(
         ForeignKey("stories.story_id", ondelete="SET NULL"), nullable=True
     )
-    # Stored as naive UTC; the API adds a "Z" so browsers show the user's local time.
+
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utc_now_naive, nullable=False)
     read_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
@@ -91,15 +87,11 @@ class ChatState(Base):
     partner_id: Mapped[int] = mapped_column(
         ForeignKey("users.user_id", ondelete="CASCADE"), nullable=False
     )
-    # "Delete chat": hides every message with id <= this value, for user_id only.
-    # The other person's inbox/thread is completely unaffected.
+
     cleared_before_id: Mapped[int] = mapped_column(
         Integer, nullable=False, default=0, server_default="0"
     )
-    # "Mark as unread" from the 3-dot menu: forces this row to look unread again in
-    # the inbox, without changing any message's real read_at (so the sender's "Seen"
-    # status doesn't change - same behavior as Instagram). Cleared when the thread
-    # is opened again.
+
     manually_unread: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False, server_default="0"
     )
@@ -122,11 +114,10 @@ class MessageRequestAccept(Base):
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    # The person who accepted (the receiver of the request).
+   
     user_id: Mapped[int] = mapped_column(
         ForeignKey("users.user_id", ondelete="CASCADE"), nullable=False
     )
-    # The person whose request was accepted (the sender).
     partner_id: Mapped[int] = mapped_column(
         ForeignKey("users.user_id", ondelete="CASCADE"), nullable=False
     )
