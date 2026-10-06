@@ -24,8 +24,6 @@ from app.core.database import SessionLocal
 
 logger = logging.getLogger(__name__)
 
-# Only real browser push services are accepted as a subscription address. Without this,
-# someone could register any web address and make our server send requests to it.
 _ALLOWED_HOSTS = ("fcm.googleapis.com", "android.googleapis.com", "updates.push.services.mozilla.com")
 _ALLOWED_SUFFIXES = (".push.apple.com", ".notify.windows.com", ".push.services.mozilla.com")
 
@@ -56,7 +54,6 @@ def _vapid_subject() -> str:
 
 
 def _messages_url(role: Optional[str], sender_id: int) -> str:
-    """Same folders the website uses: each role has its own messages page."""
     role = str(getattr(role, "value", role) or "").lower()
     if role == "influencer":
         base = "/influencer/messages"
@@ -82,8 +79,6 @@ class PushService:
     # ---------- devices ----------
     @staticmethod
     def subscribe(db: Session, user: User, endpoint: str, p256dh: str, auth: str) -> None:
-        """Remember this device for this user. If the same browser was used by someone
-        else before, it now belongs to the person who is logged in."""
         existing = db.execute(
             select(PushSubscription).where(PushSubscription.endpoint == endpoint)
         ).scalar_one_or_none()
@@ -97,7 +92,7 @@ class PushService:
         try:
             db.commit()
         except IntegrityError:
-            db.rollback()  # two tabs subscribed at the same moment - the other one won
+            db.rollback()
             row = db.execute(
                 select(PushSubscription).where(PushSubscription.endpoint == endpoint)
             ).scalar_one_or_none()
@@ -109,7 +104,6 @@ class PushService:
 
     @staticmethod
     def unsubscribe(db: Session, endpoint: str) -> bool:
-        """Stop notifications for one device (used on logout)."""
         result = db.execute(delete(PushSubscription).where(PushSubscription.endpoint == endpoint))
         db.commit()
         return bool(result.rowcount)
@@ -117,11 +111,6 @@ class PushService:
     # ---------- sending ----------
     @staticmethod
     def notify_new_message(message_id: int, exclude_endpoint: Optional[str] = None) -> None:
-        """Runs in the background right after a message was saved. Never raises: a
-        notification problem must never break sending a chat message.
-
-        `exclude_endpoint` is the sender's own browser. It is never notified about the
-        sender's own message, even if that browser is registered under the receiver."""
         if not is_configured():
             logger.warning(
                 "Push skipped for message %s: VAPID_PUBLIC_KEY / VAPID_PRIVATE_KEY are not set on this server",

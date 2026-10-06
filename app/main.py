@@ -113,7 +113,6 @@ async def lifespan(app: FastAPI):
         finally:
             db.close()
 
-        # The built-in admin login must exist in every environment (also production).
         db = SessionLocal()
         try:
             ensure_admin_user(db)
@@ -337,7 +336,6 @@ async def update_profile(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> dict:
-    # ---- validate everything first, so a bad request changes nothing ----
     if first_name is not None:
         first_name = first_name.strip()
         if not first_name:
@@ -419,7 +417,6 @@ async def update_profile(
         if current_user.profile is not None:
             current_user.profile.username = username
 
-        # The story tables keep copies of the username as text, so update those too.
         my_story_ids = select(Story.story_id).where(Story.user_id == uid)
         db.query(Story).filter(Story.user_id == uid).update(
             {Story.username: username}, synchronize_session=False)

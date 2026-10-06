@@ -73,8 +73,6 @@ class User(Base):
         return self.profile.posts_count if self.profile else 0
 
     def _ensure_profile(self) -> "Profile":
-        """Lazily create the linked Profile row the first time any profile
-        field (avatar/bio/location) is set on a user who doesn't have one yet."""
         from app.common.models.social import Profile
         if not self.profile:
             self.profile = Profile(user_id=self.user_id, account_type=self.role, username=self.username)

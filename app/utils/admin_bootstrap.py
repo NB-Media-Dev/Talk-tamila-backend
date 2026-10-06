@@ -1,15 +1,3 @@
-"""Makes sure the built-in admin account always exists.
-
-Runs on every backend start (in every environment, including production), so a fresh
-database - for example a new Aiven database - always gets its admin login.
-
-  username: admin
-  email:    admin@talktamila.com
-  password: admin123   (stored hashed; only used when the account is first created)
-
-The password is only set when the account is CREATED. If you change the admin password
-later (Settings -> Edit profile & change password), it is never reset back on restart.
-"""
 from datetime import date
 
 from sqlalchemy import or_
@@ -24,7 +12,6 @@ ADMIN_PASSWORD = "admin123"
 ADMIN_FIRST_NAME = "Admin"
 ADMIN_LAST_NAME = "Tamil"
 ADMIN_DOB = date(1996, 6, 15)
-# mobile_no must be unique, so if the first number is already taken the next one is used.
 ADMIN_MOBILE_CANDIDATES = ("9876543210", "9000000001", "9000000002")
 
 
@@ -36,7 +23,6 @@ def ensure_admin_user(db: Session) -> None:
     )
 
     if existing is not None:
-        # Never touch the password. Only make sure the account can actually be used.
         changed = False
         if existing.role != "admin":
             existing.role = "admin"
@@ -67,7 +53,7 @@ def ensure_admin_user(db: Session) -> None:
         is_active=True,
     )
     db.add(admin)
-    db.flush()  # gives the new user its id, needed for the profile row
+    db.flush()
     db.add(
         Profile(
             user_id=admin.user_id,

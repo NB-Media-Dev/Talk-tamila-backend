@@ -61,7 +61,6 @@ def test_admin_story_management(client: TestClient, admin_auth_headers: dict, cr
 
 
 def test_admin_creates_public_story(client: TestClient, admin_auth_headers: dict):
-    """Admin stories are strictly and always PUBLIC broadcast stories."""
     # 1. Admin creates story via /api/admin/stories
     admin_post = client.post(
         "/api/admin/stories",
@@ -71,7 +70,6 @@ def test_admin_creates_public_story(client: TestClient, admin_auth_headers: dict
     assert admin_post.status_code == 201
     assert admin_post.json()["audience"] == "PUBLIC"
 
-    # 2. Even if an admin specifies FOLLOWERS or CLOSE_FRIENDS, it is enforced to PUBLIC
     forced_post = client.post(
         "/api/stories",
         json={"content": "Admin Broadcast", "audience": "FOLLOWERS"},

@@ -20,9 +20,7 @@ from app.common.schemas.post import (
 
 # ---------------------------------------------------------------------------
 # WHO CAN POST
-# Right now only admins can create posts. To let everybody post later, change
 # this to {"admin", "influencer", "freelancer"}. Nothing else needs to change
-# on the backend (the frontend has the same switch in lib/postPermissions.ts).
 # ---------------------------------------------------------------------------
 POST_CREATOR_ROLES = {"admin"}
 
@@ -43,7 +41,6 @@ def max_bytes_for(post_type: str) -> int:
 
 
 def sniff_mime(data: bytes) -> Optional[str]:
-    """Work out the real file type from the first bytes (never trust the browser)."""
     if data[:3] == b"\xff\xd8\xff":
         return "image/jpeg"
     if data[:8] == b"\x89PNG\r\n\x1a\n":
@@ -195,7 +192,6 @@ class PostService:
     def _poll_data(
         db: Session, post_ids: List[int], viewer_id: int
     ) -> Tuple[Dict[int, int], Dict[int, int]]:
-        """Returns (votes per option_id, {post_id: option the viewer voted for})."""
         if not post_ids:
             return {}, {}
         counts = dict(
@@ -337,7 +333,6 @@ class PostService:
 
     @staticmethod
     def media_bytes(db: Session, post_id: int, start: int, length: int) -> bytes:
-        # SUBSTR works on bytes for BLOB columns, so a video seek only reads the slice it needs.
         data = db.execute(
             select(func.substr(Post.media_data, start + 1, length)).where(Post.post_id == post_id)
         ).scalar()

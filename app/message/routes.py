@@ -86,9 +86,6 @@ def send_message(
     x_push_endpoint: Optional[str] = Header(default=None),
 ) -> dict:
     message = MessageService.send(db, current_user, user_id, payload.body)
-    # Instagram-style notification for the receiver. Runs after the response is sent,
-    # so sending a message never gets slower, and never fails because of a notification.
-    # x_push_endpoint = the sender's own browser, so it is never notified about its own message.
     background_tasks.add_task(PushService.notify_new_message, message["id"], x_push_endpoint)
     return message
 
@@ -238,13 +235,7 @@ def push_subscribe(
 
 @router.post("/push/unsubscribe")
 async def push_unsubscribe(request: Request, db: Session = Depends(get_db)) -> dict:
-    """Stop notifications for one browser (called when the person logs out).
-
-    Deliberately needs no login token: the website calls it with navigator.sendBeacon
-    at the moment of logout, when the token is already being thrown away. The
-    `endpoint` is a long private address only that browser and this server know, so it
-    works like a password for that one device and nothing else.
-    """
+    """Stop notifications for one browser (called when the person logs out)."""
     try:
         raw = await request.body()
         data = PushUnsubscribeRequest(**json.loads(raw or b"{}"))

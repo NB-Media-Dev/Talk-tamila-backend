@@ -1,5 +1,3 @@
-"""Direct messaging: inbox, 1:1 threads, read receipts, reactions, unsend, delete
-chat, mark read/unread, call logging, and people search."""
 import json
 from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, List, Optional, Set
@@ -25,8 +23,6 @@ from app.common.models.story import Story
 from app.common.models.user import User
 
 
-# How many messages someone can send to a person who has NOT accepted their request
-# (Instagram allows 1). Change this number if you want to allow more.
 MAX_REQUEST_MESSAGES = 1
 
 
@@ -76,8 +72,6 @@ def _message_dict(
 
 
 def _load_stories(db: Session, story_ids: Iterable[Optional[int]]) -> Dict[int, Dict[str, Any]]:
-    """Small context card per story. Selects columns only - media_url can be a huge
-    base64 blob and must never be pulled into a chat poll."""
     ids = {sid for sid in story_ids if sid}
     if not ids:
         return {}
@@ -148,14 +142,6 @@ class MessageService:
     # ---------- message requests (Instagram-style) ----------
     @staticmethod
     def _request_partner_ids(db: Session, me_id: int, partner_ids: Iterable[int]) -> Set[int]:
-        """Which of `partner_ids` are a *message request* from MY point of view.
-
-        A chat is a normal chat for me when ANY of these is true:
-          - we follow each other (mutual follow)
-          - I accepted their request
-          - I have sent them a message myself (replying counts as accepting)
-        Otherwise everything they send me sits in my Requests tab.
-        """
         ids = list({int(p) for p in partner_ids if p and p != me_id})
         if not ids:
             return set()
@@ -199,21 +185,11 @@ class MessageService:
 
     @staticmethod
     def request_state(db: Session, me_id: int, other_id: int) -> Dict[str, Any]:
-        """Small block sent with every thread response so the chat screen knows whether
-        to show the Accept / Delete / Block bar, or the "request sent" notice.
-
-        is_request   - THEY are asking to message ME and I have not accepted yet.
-        request_sent - I am messaging someone who has not accepted me yet.
-        can_send     - False once I used up my allowed messages while waiting.
-        """
         my_state = MessageService._get_chat_state(db, me_id, other_id)
         cleared_before_id = my_state.cleared_before_id if my_state else 0
 
         is_request = other_id in MessageService._request_partner_ids(db, me_id, [other_id])
         if is_request:
-            # It is only a real request if THEY actually sent me a message that I can
-            # still see. Just opening a chat with someone (or starting one myself) must
-            # not show "Accept message request from ...?" on an empty thread.
             they_sent = db.execute(
                 select(func.count(DirectMessage.id)).where(
                     DirectMessage.sender_id == other_id,
@@ -227,8 +203,6 @@ class MessageService:
         request_sent = me_id in MessageService._request_partner_ids(db, other_id, [me_id])
         can_send = True
         if request_sent:
-            # Only count messages I can still see. If I used "Delete chat", those old
-            # messages are hidden from me, so they must not lock me out of a chat that
             # now looks empty.
             sent = db.execute(
                 select(func.count(DirectMessage.id)).where(
@@ -243,7 +217,6 @@ class MessageService:
 
     @staticmethod
     def accept_request(db: Session, me: User, other_id: int) -> Dict[str, Any]:
-        """Accept a message request: the chat moves from Requests to the main inbox."""
         MessageService._get_partner(db, me, other_id)
         exists = db.execute(
             select(MessageRequestAccept.id).where(
@@ -271,7 +244,6 @@ class MessageService:
     # ---------- block / mute helpers ----------
     @staticmethod
     def _block_state(db: Session, me_id: int, other_id: int) -> Dict[str, bool]:
-        """blocked_by_me: I blocked them. blocked_me: they blocked me."""
         rows = db.execute(
             select(UserBlock.blocker_id).where(
                 or_(
@@ -354,7 +326,6 @@ class MessageService:
             if mid > (states[sid].cleared_before_id if sid in states else 0)
         }
 
-        # Requests are counted separately so they don't inflate the navbar badge.
         request_ids = MessageService._request_partner_ids(db, me.user_id, unread_senders)
         return {
             "latest_message_id": int(latest or 0),
@@ -389,7 +360,6 @@ class MessageService:
         ]
         chat_states = MessageService._chat_state_map(db, me.user_id, partner_ids)
 
-        # Count unread messages per partner, ignoring anything hidden by "delete chat".
         unread_id_rows = db.execute(
             select(DirectMessage.sender_id, DirectMessage.id).where(
                 DirectMessage.receiver_id == me.user_id, DirectMessage.read_at.is_(None)
@@ -435,7 +405,6 @@ class MessageService:
                     },
                     "unread_count": unread_count,
                     "is_unread": unread_count > 0 or manually_unread,
-                    # True = not a mutual follow and not accepted yet -> shown in Requests.
                     "is_request": pid in request_ids,
                 }
             )
@@ -452,22 +421,17 @@ class MessageService:
         limit: int = 40,
         sync_from_id: Optional[int] = None,
     ) -> Dict[str, Any]:
-        """`sync_from_id` is for polling: the client passes the oldest message id it
-        holds and gets back the current reactions for every message from there on, so
-        reactions added or removed on older messages show up without a reload."""
         other = MessageService._get_partner(db, me, other_id)
         pair = or_(
             and_(DirectMessage.sender_id == me.user_id, DirectMessage.receiver_id == other_id),
             and_(DirectMessage.sender_id == other_id, DirectMessage.receiver_id == me.user_id),
         )
 
-        # "Delete chat" only hides history for the person who deleted it.
         state = MessageService._get_chat_state(db, me.user_id, other_id)
         cleared_before_id = state.cleared_before_id if state else 0
         if cleared_before_id:
             pair = and_(pair, DirectMessage.id > cleared_before_id)
 
-        # Opening the full thread (not a "load older"/poll request) clears any
         # "mark as unread" flag, same as Instagram.
         if after_id is None and before_id is None and state is not None and state.manually_unread:
             state.manually_unread = False
@@ -491,8 +455,6 @@ class MessageService:
 
         request = MessageService.request_state(db, me.user_id, other_id)
 
-        # Opening/polling the thread marks the other person's messages as seen - except
-        # for a pending request: like Instagram, they can't tell you looked until you accept.
         marked = 0
         if not request["is_request"]:
             marked = db.execute(
@@ -530,10 +492,8 @@ class MessageService:
             in_range = db.execute(
                 select(DirectMessage.id).where(pair, DirectMessage.id >= sync_from_id)
             ).scalars().all()
-            # Lets the client drop messages that were unsent since its last poll.
             existing_ids = [int(mid) for mid in in_range]
             found = _load_reactions(db, in_range)
-            # Every message in range gets an entry (possibly empty) so removals propagate.
             reactions_sync = {mid: found.get(mid, []) for mid in in_range}
 
         return {
@@ -556,8 +516,6 @@ class MessageService:
         if state["blocked_me"]:
             raise HTTPException(status.HTTP_403_FORBIDDEN, "You can't send messages to this user.")
 
-        # Message requests: if they don't follow me back (and haven't accepted me), my
-        # message goes to THEIR Requests tab, and I only get a few until they accept.
         req = MessageService.request_state(db, me.user_id, other_id)
         if req["request_sent"] and not req["can_send"]:
             raise HTTPException(
@@ -574,15 +532,12 @@ class MessageService:
     # ---------- unsend ----------
     @staticmethod
     def unsend(db: Session, me: User, message_id: int) -> Dict[str, Any]:
-        """Delete a message I sent, for both people (Instagram-style Unsend)."""
         msg = db.get(DirectMessage, message_id)
-        # 404 (not 403) for messages outside my own chats, so ids can't be probed.
         if msg is None or me.user_id not in (msg.sender_id, msg.receiver_id):
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Message not found")
         if msg.sender_id != me.user_id:
             raise HTTPException(status.HTTP_403_FORBIDDEN, "You can only unsend your own messages")
 
-        # Reactions are removed explicitly so this also works if the DB foreign key
         # was created without ON DELETE CASCADE.
         db.execute(delete(MessageReaction).where(MessageReaction.message_id == message_id))
         db.delete(msg)
@@ -592,10 +547,6 @@ class MessageService:
     # ---------- delete chat (for me only) ----------
     @staticmethod
     def delete_chat(db: Session, me: User, other_id: int) -> Dict[str, Any]:
-        """Instagram-style "Delete chat": clears the conversation out of my inbox
-        and thread history. The other person's copy is completely untouched, and if
-        they (or I) send a new message later, the chat simply reappears with just
-        the messages from that point on."""
         MessageService._get_partner(db, me, other_id)
         pair = or_(
             and_(DirectMessage.sender_id == me.user_id, DirectMessage.receiver_id == other_id),
@@ -609,7 +560,6 @@ class MessageService:
         db.commit()
         return {"success": True}
 
-    # ---------- block / unblock / mute / report (chat header 3-dot menu) ----------
     @staticmethod
     def block(db: Session, me: User, other_id: int) -> Dict[str, Any]:
         MessageService._get_partner(db, me, other_id)
@@ -662,7 +612,6 @@ class MessageService:
         db.commit()
         return {"success": True}
 
-    # ---------- mark read / unread (3-dot menu on the inbox row) ----------
     @staticmethod
     def mark_read(db: Session, me: User, other_id: int) -> Dict[str, Any]:
         MessageService._get_partner(db, me, other_id)
@@ -682,8 +631,6 @@ class MessageService:
 
     @staticmethod
     def mark_unread(db: Session, me: User, other_id: int) -> Dict[str, Any]:
-        """Flags the inbox row as unread without touching real read receipts, so the
-        other person's "Seen" status is not affected - matches Instagram's behavior."""
         MessageService._get_partner(db, me, other_id)
         state = MessageService._get_or_create_chat_state(db, me.user_id, other_id)
         state.manually_unread = True
@@ -695,8 +642,6 @@ class MessageService:
     def log_call(
         db: Session, caller_id: int, callee_id: int, media: str, outcome: str, seconds: int
     ) -> Dict[str, Any]:
-        """Drop a call record into the chat as a message, same as Instagram's call
-        bubbles ("Missed video call", "Call ended · 3:12", etc)."""
         body = json.dumps({"media": media, "outcome": outcome, "seconds": seconds})
         msg = DirectMessage(
             sender_id=caller_id, receiver_id=callee_id, body=body, kind=MESSAGE_KIND_CALL
@@ -716,9 +661,6 @@ class MessageService:
         kind: str,
         body: str,
     ) -> Optional[DirectMessage]:
-        """Drop a story reply/reaction into the owner's inbox. Returns the new message,
-        or None when nothing was sent (own story, inactive owner, or a reaction with the
-        same emoji from this person on this story already exists)."""
         if kind not in (MESSAGE_KIND_STORY_REPLY, MESSAGE_KIND_STORY_REACTION):
             raise ValueError(f"Unsupported story message kind: {kind}")
         if sender_id == receiver_id:
@@ -758,7 +700,6 @@ class MessageService:
     @staticmethod
     def _get_reactable_message(db: Session, me: User, message_id: int) -> DirectMessage:
         msg = db.get(DirectMessage, message_id)
-        # 404 (not 403) for messages outside the person's own chats, so ids can't be probed.
         if msg is None or me.user_id not in (msg.sender_id, msg.receiver_id):
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Message not found")
         return msg
@@ -772,7 +713,6 @@ class MessageService:
 
     @staticmethod
     def react(db: Session, me: User, message_id: int, emoji: str) -> Dict[str, Any]:
-        """Set my reaction on a message (sent or received), replacing any previous one."""
         MessageService._get_reactable_message(db, me, message_id)
 
         def _apply() -> None:
@@ -791,7 +731,6 @@ class MessageService:
         try:
             _apply()
         except IntegrityError:
-            # Two taps raced past the existence check; the unique key stopped the second.
             db.rollback()
             _apply()
         return MessageService._reaction_payload(db, message_id)

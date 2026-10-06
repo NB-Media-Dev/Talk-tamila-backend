@@ -40,7 +40,6 @@ def test_cannot_self_register_as_admin(client):
 
 
 def test_otp_is_voided_after_too_many_wrong_guesses(client, db_session, monkeypatch):
-    # Never send a real e-mail from the test suite; capture the OTP it would have sent.
     sent = {}
     monkeypatch.setattr(
         "app.common.services.auth_service.send_otp_email",
@@ -58,7 +57,6 @@ def test_otp_is_voided_after_too_many_wrong_guesses(client, db_session, monkeypa
         resp = client.post("/api/v1/auth/verify-otp", json={"identifier": user.email, "otp": wrong})
         assert resp.status_code == 400
 
-    # Even the correct code no longer works: a fresh OTP has to be requested.
     resp = client.post("/api/v1/auth/verify-otp", json={"identifier": user.email, "otp": real_otp})
     assert resp.status_code == 400
 
@@ -143,7 +141,6 @@ def test_cors_rejects_arbitrary_origins(client):
 
 
 def test_secret_key_rejects_known_default_in_production(monkeypatch):
-    # Regression: SECRET_KEY silently fell back to a hardcoded value if unset.
     import importlib
     monkeypatch.setenv("SECRET_KEY", "dev_secret_key_change_in_production_jwt_9348572849")
     monkeypatch.setenv("ENVIRONMENT", "production")
@@ -180,7 +177,6 @@ def test_expired_story_not_reachable_by_direct_id(client, db_session, creator_au
 
 
 def test_otp_is_hashed_at_rest(db_session, monkeypatch):
-    # Regression: reset_otp used to store the raw 6-digit code; a DB leak
     # would have exposed every pending reset code as-is.
     sent = {}
     monkeypatch.setattr(
