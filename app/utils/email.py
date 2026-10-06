@@ -35,6 +35,5 @@ def send_otp_email(to_email: str, otp: str) -> None:
     try:
         api_instance.send_transac_email(message)
     except ApiException as exc:
-        # Brevo's response body says exactly why (bad key, unverified sender, quota...).
         logger.error("Brevo rejected the email: status=%s body=%s", exc.status, exc.body)
         raise

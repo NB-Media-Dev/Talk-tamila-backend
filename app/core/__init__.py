@@ -4,7 +4,6 @@ from app.core.security import create_access_token, get_password_hash, hash_passw
 
 # `dependencies` imports the User model, and the User model imports
 # app.core.database. Loading `dependencies` eagerly here made that a circular
-# import whenever the models were imported first. It is now loaded lazily, on
 # first use, so `from app.core import get_current_user` still works.
 _LAZY_DEPENDENCIES = {
     "get_db",

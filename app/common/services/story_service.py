@@ -272,7 +272,6 @@ def story_to_slide(story_item: StoryItemResponse, creator_name: str) -> StorySli
 class StoryService:
     @staticmethod
     def create_story(payload, current_user: User, db: Session) -> StoryItemResponse:
-        """Create a story from a JSON payload (media_url or gradient already provided)."""
         media_url = getattr(payload, "media_url", None)
         caption = getattr(payload, "caption", None) or getattr(payload, "content", None)
         
@@ -962,7 +961,6 @@ class StoryService:
             db.commit()
 
             if story.user_id != current_user.id:
-                # A heart is a reaction: tell the owner and drop it into their inbox.
                 StoryService._notify_story_owner(
                     db, story, "story_like", f"{current_user.username} liked your story"
                 )
@@ -1040,8 +1038,6 @@ class StoryService:
 
     @staticmethod
     def _send_story_message(db: Session, sender_id: int, story: Story, kind: str, body: str):
-        """Best effort: the reply/reaction itself is already saved, so a failure to
-        mirror it into chat is logged instead of failing the request."""
         try:
             return MessageService.send_story_message(
                 db, sender_id, story.user_id, story.story_id, kind, body
@@ -1115,7 +1111,6 @@ class StoryService:
             except Exception:
                 db.rollback()
 
-            # The reply also lands in the owner's inbox as a chat message.
             StoryService._send_story_message(
                 db, current_user.id, story, MESSAGE_KIND_STORY_REPLY, text
             )
@@ -1769,7 +1764,6 @@ class StoryService:
             sent = StoryService._send_story_message(
                 db, current_user.id, story, MESSAGE_KIND_STORY_REACTION, emoji
             )
-            # Only notify when a new reaction message went out, so repeat taps stay quiet.
             if sent:
                 StoryService._notify_story_owner(
                     db,

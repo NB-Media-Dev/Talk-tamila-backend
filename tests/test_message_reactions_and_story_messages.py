@@ -1,4 +1,3 @@
-"""Story replies/reactions arrive as chat messages, and messages can be reacted to."""
 from datetime import timedelta
 
 import pytest
@@ -65,7 +64,6 @@ def test_story_reply_becomes_a_message(client, people, story):
     assert m["story"]["caption"] == "Vanakkam from Madurai"
     assert m["story"]["available"] is True
 
-    # It shows up in the inbox preview for the owner, flagged with its kind.
     convs = client.get(f"{API}/messages/conversations", headers=_h(owner)).json()
     last = next(c for c in convs if c["partner"]["user_id"] == replier)["last_message"]
     assert last["kind"] == "story_reply" and last["body"] == "Superb!"
@@ -84,7 +82,6 @@ def test_story_react_persists_and_sends_one_message_per_emoji(client, db_session
     for _ in range(3):  # repeated taps of the same emoji
         r = client.post(f"{API}/stories/{story}/react", json={"emoji": "🔥"}, headers=_h(reactor))
         assert r.status_code == 200, r.text
-    # First-ever react used to be rolled back (missing commit); it must persist now.
     assert db_session.query(StoryLike).filter_by(story_id=story, user_id=reactor).count() == 1
 
     client.post(f"{API}/stories/{story}/react", json={"emoji": "😍"}, headers=_h(reactor))
@@ -119,7 +116,6 @@ def test_react_to_sent_and_received_messages(client, db_session, people):
     sent = client.post(f"{API}/messages/thread/{b}", json={"body": "hello"}, headers=_h(a)).json()
     mid = sent["id"]
 
-    # The receiver reacts, then the sender reacts to their own message too.
     r = client.put(f"{API}/messages/{mid}/reaction", json={"emoji": "😂"}, headers=_h(b))
     assert r.status_code == 200, r.text
     client.put(f"{API}/messages/{mid}/reaction", json={"emoji": "❤️"}, headers=_h(a))
@@ -144,7 +140,6 @@ def test_reaction_changes_reach_the_other_person_via_sync(client, people):
     second = client.post(f"{API}/messages/thread/{b}", json={"body": "two"}, headers=_h(a)).json()
     client.put(f"{API}/messages/{first['id']}/reaction", json={"emoji": "🙏"}, headers=_h(b))
 
-    # A poll that asks only for messages newer than `second` still learns about the reaction.
     poll = _thread(client, a, b, after_id=second["id"], sync_from_id=first["id"])
     assert poll["messages"] == []
     assert poll["reactions_sync"][str(first["id"])] == [{"user_id": b, "emoji": "🙏"}]

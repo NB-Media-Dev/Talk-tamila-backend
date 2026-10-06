@@ -40,7 +40,6 @@ class PostOut(BaseModel):
 
 class FeedResponse(BaseModel):
     items: List[PostOut]
-    # Authors are sent once here (not inside every post) because avatars are large.
     authors: Dict[int, PostAuthor]
     has_more: bool = False
     next_before_id: Optional[int] = None

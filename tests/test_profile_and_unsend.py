@@ -20,7 +20,6 @@ def test_public_profile_and_follow(client):
     assert d["is_following"] is True and d["followers_count"] == 1
     d2 = client.get(f"/api/v1/users/by-username/{me['username']}", headers=h(3)).json()
     assert d2["follows_you"] is True and d2["following_count"] == 1 and d2["followers_count"] == 0
-    # receiver's own profile shows the new follower live (no refresh problem on the backend side)
     assert client.get("/api/v1/auth/profile", headers=h(3)).json()["followers_count"] == 1
     assert client.get("/api/v1/users/by-username/nobody_here_x", headers=h(1)).status_code == 404
 

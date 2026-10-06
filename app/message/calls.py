@@ -1,18 +1,3 @@
-"""Voice/video call signaling. This relays WebRTC handshake messages (invite, offer,
-answer, ICE candidates, hangup) between two logged-in users over a WebSocket - it
-never sees or touches the actual audio/video media, only the small JSON messages
-needed to set up the peer-to-peer connection.
-
-State lives in this process's memory only. That's fine for a single backend
-instance (which is what this app runs today); a multi-instance deployment would
-need this moved to something shared like Redis pub/sub.
-
-Getting audio/video to actually connect also needs a STUN server (free, public
-ones work fine - e.g. Google's) and, for networks with strict NATs/firewalls, a
-TURN relay. STUN alone is usually enough for two people on the same Wi-Fi, which
-covers local testing; add a TURN provider (e.g. Metered, Twilio, or a self-hosted
-coturn) before relying on this across arbitrary networks.
-"""
 import asyncio
 import json
 import logging
@@ -36,10 +21,6 @@ RING_TIMEOUT_SECONDS = 45
 
 @dataclass
 class CallUser:
-    """Plain snapshot of the logged-in user, taken while the DB session is still
-    open. The ORM `User` can't be used after `db.close()`: reading `avatar_url`
-    lazy-loads the profile and raises DetachedInstanceError, which is what broke
-    the "incoming call" card."""
 
     user_id: int
     username: str
@@ -47,8 +28,6 @@ class CallUser:
     avatar_url: Optional[str] = None
 
 
-# Avatars are stored as base64 data URLs and can be huge; don't push those through
-# the signaling socket - the ringing screen falls back to initials.
 _MAX_AVATAR_CHARS = 200_000
 
 
@@ -96,16 +75,12 @@ class CallSession:
 
 
 class CallManager:
-    """One active call per user at a time. Everything here runs on the single
-    asyncio event loop FastAPI already uses for WebSockets, so plain dict access
-    is safe - there's no multithreading to race against."""
 
     def __init__(self) -> None:
         self.connections: Dict[int, WebSocket] = {}
         self.calls: Dict[str, CallSession] = {}
         self.user_call: Dict[int, str] = {}
         self._next_id = 0
-        # Keeps a reference to "fire and forget" DB-logging tasks so they aren't
         # garbage-collected mid-flight, without ever blocking the signaling path.
         self._background: Set["asyncio.Task[None]"] = set()
 
@@ -119,14 +94,13 @@ class CallManager:
         try:
             await ws.send_json(payload)
         except Exception:
-            pass  # the socket is already gone; the disconnect handler will clean up
+            pass
 
     async def _send_user(self, user_id: int, payload: dict) -> None:
         await self._send(self.connections.get(user_id), payload)
 
     # ---------- connection lifecycle ----------
     async def register(self, user_id: int, ws: WebSocket) -> None:
-        """Only one live socket per user - a second tab/device takes over."""
         old = self.connections.get(user_id)
         if old is not None and old is not ws:
             try:
@@ -140,7 +114,6 @@ class CallManager:
             self.connections.pop(user_id, None)
 
     async def drop_user(self, user_id: int) -> None:
-        """Socket closed (tab closed, refresh, network loss) - end any call they're in."""
         call_id = self.user_call.get(user_id)
         if not call_id:
             return
@@ -173,7 +146,6 @@ class CallManager:
             return
         media = message.get("media") if message.get("media") in ("audio", "video") else "audio"
 
-        # Blocked in either direction: it just looks like they can't be reached.
         if await run_in_threadpool(_is_blocked_pair, me.user_id, to_id):
             await self._send(ws, {"type": "unavailable", "call_id": None})
             return
@@ -228,8 +200,6 @@ class CallManager:
         await self._send(session.caller_ws, {"type": "accepted", "call_id": session.call_id})
 
     async def _relay(self, me: CallUser, message: dict) -> None:
-        """Passes an SDP offer/answer or an ICE candidate straight through to the
-        other side of the call - we never inspect the contents."""
         session = self.calls.get(message.get("call_id"))
         if session is None or session.ended or me.user_id not in (session.caller_id, session.callee_id):
             return
@@ -303,12 +273,10 @@ manager = CallManager()
 
 @router.websocket("/ws")
 async def calls_ws(websocket: WebSocket, token: str = Query(...)) -> None:
-    """Browsers can't set an Authorization header on a WebSocket handshake, so the
-    access token travels as a query parameter instead: wss://.../calls/ws?token=..."""
+    """Browsers can't set an Authorization header on a WebSocket handshake, so the"""
     db = SessionLocal()
     try:
         orm_user = _user_from_access_token(db, token)
-        # Copy everything we need while the session is open (see CallUser).
         user = _snapshot_user(orm_user) if orm_user is not None else None
     finally:
         db.close()

@@ -18,12 +18,10 @@ from app.core.database import Base
 
 
 def _utc_now() -> datetime:
-    """Naive UTC time (the database columns do not store a timezone)."""
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 class Post(Base):
-    """A feed post: text, image, video, GIF or poll."""
 
     __tablename__ = "posts"
 
@@ -37,8 +35,6 @@ class Post(Base):
     # Body text, image/video caption, or the poll question.
     content: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
-    # Uploaded image/video. Stored as raw bytes and served by GET /posts/{id}/media,
-    # so the feed JSON stays small. "deferred" = not loaded unless asked for.
     media_type: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
     media_mime: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     media_size: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
@@ -46,7 +42,6 @@ class Post(Base):
         LargeBinary().with_variant(LONGBLOB(), "mysql"), nullable=True, deferred=True
     )
 
-    # GIFs are picked from an external library (Giphy), so only the link is stored.
     gif_url: Mapped[Optional[str]] = mapped_column(String(1000), nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now)
@@ -80,7 +75,6 @@ class PostPollOption(Base):
 
 
 class PostPollVote(Base):
-    """One vote per user per poll."""
 
     __tablename__ = "post_poll_votes"
 

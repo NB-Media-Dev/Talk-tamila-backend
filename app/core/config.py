@@ -42,7 +42,6 @@ class Settings(BaseSettings):
     # Leave them empty and notifications are simply switched off.
     VAPID_PUBLIC_KEY: str = ""
     VAPID_PRIVATE_KEY: str = ""
-    # Must be "mailto:you@example.com" or an https:// address. Falls back to SMTP_FROM_EMAIL.
     VAPID_SUBJECT: str = ""
 
     BACKEND_CORS_ORIGINS: Union[str, List[str]] = [

@@ -1,8 +1,3 @@
-"""Per-user block / mute / report records for direct messages.
-
-These are brand-new tables, so Base.metadata.create_all() creates them
-automatically on startup - no ALTER TABLE migration is needed.
-"""
 from datetime import datetime, timezone
 
 from sqlalchemy import DateTime, ForeignKey, Integer, String, UniqueConstraint
@@ -16,7 +11,6 @@ def _utc_now_naive() -> datetime:
 
 
 class UserBlock(Base):
-    """blocker_id has blocked blocked_id: neither can message or call the other."""
 
     __tablename__ = "user_blocks"
     __table_args__ = (
@@ -34,7 +28,6 @@ class UserBlock(Base):
 
 
 class ChatMute(Base):
-    """user_id muted the chat with partner_id: it no longer counts in the unread badge."""
 
     __tablename__ = "chat_mutes"
     __table_args__ = (
@@ -52,7 +45,6 @@ class ChatMute(Base):
 
 
 class UserReport(Base):
-    """A report filed from the chat menu, for admins to review."""
 
     __tablename__ = "user_reports"
 

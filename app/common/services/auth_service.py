@@ -102,7 +102,6 @@ class AuthService:
 
     @staticmethod
     def send_change_password_otp(db: Session, user: User) -> str:
-        """Email a 6-digit code to the user's registered address. Returns the masked address."""
         # Throttle: the code's issue time is expiry minus 10 minutes.
         expires = user.reset_otp_expires
         if expires:
@@ -138,7 +137,6 @@ class AuthService:
     def change_password_with_otp(
         db: Session, user: User, old_password: str, otp: str, new_password: str
     ) -> None:
-        # Check the current password first so a typo there doesn't burn OTP attempts.
         if not verify_password(old_password, user.password):
             raise HTTPException(status_code=400, detail="Current password incorrect.")
         AuthService._check_otp_valid(db, user, otp)

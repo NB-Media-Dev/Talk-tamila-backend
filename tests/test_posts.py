@@ -109,7 +109,6 @@ def test_poll_create_vote_once(client: TestClient, admin_auth_headers, influence
                         headers=influencer_auth_headers)
     assert again.status_code == 409
 
-    # admin's own view: has not voted; influencer's view shows their vote
     feed_a = client.get("/api/v1/posts", headers=admin_auth_headers).json()["items"][0]["poll"]
     assert feed_a["my_vote_option_id"] is None and feed_a["total_votes"] == 1
     feed_i = client.get("/api/v1/posts", headers=influencer_auth_headers).json()["items"][0]["poll"]
@@ -146,7 +145,6 @@ def test_delete_rules_and_pagination(client: TestClient, admin_auth_headers, inf
     page2 = client.get(f"/api/v1/posts?limit=2&before_id={page1['next_before_id']}", headers=admin_auth_headers).json()
     assert page2["items"][0]["post_id"] < page1["items"][-1]["post_id"]
 
-    # a non-owner, non-admin cannot delete; viewers don't get the delete flag
     assert client.delete(f"/api/v1/posts/{ids[0]}", headers=influencer_auth_headers).status_code == 403
     flags = {p["post_id"]: p["can_delete"] for p in client.get("/api/v1/posts?limit=30", headers=influencer_auth_headers).json()["items"]}
     assert flags[ids[0]] is False
