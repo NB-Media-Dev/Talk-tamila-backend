@@ -50,6 +50,7 @@ from app.freelancer.routes import router as freelancer_router
 from app.influencer.routes import router as influencer_router
 from app.message.calls import router as calls_router
 from app.message.routes import router as message_router
+from app.post.routes import router as post_router
 from app.profile.routes import router as profile_router
 from app.superadmin.routes import router as superadmin_router
 from app.story.routes import router as story_router
@@ -590,6 +591,7 @@ routers = [
     story_settings_router,
     message_router,
     calls_router,
+    post_router,
     profile_router,
     admin_router,
     influencer_router,

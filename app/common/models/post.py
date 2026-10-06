@@ -1,1 +1,103 @@
+from datetime import datetime, timezone
+from typing import Optional
+
+from sqlalchemy import (
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    LargeBinary,
+    String,
+    Text,
+    UniqueConstraint,
+)
+from sqlalchemy.dialects.mysql import LONGBLOB
+from sqlalchemy.orm import Mapped, mapped_column, relationship
+
+from app.core.database import Base
+
+
+def _utc_now() -> datetime:
+    """Naive UTC time (the database columns do not store a timezone)."""
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+class Post(Base):
+    """A feed post: text, image, video, GIF or poll."""
+
+    __tablename__ = "posts"
+
+    post_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.user_id", ondelete="CASCADE", onupdate="CASCADE"),
+        nullable=False,
+    )
+    # text | image | video | gif | poll
+    post_type: Mapped[str] = mapped_column(String(20), nullable=False, default="text")
+    # Body text, image/video caption, or the poll question.
+    content: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    # Uploaded image/video. Stored as raw bytes and served by GET /posts/{id}/media,
+    # so the feed JSON stays small. "deferred" = not loaded unless asked for.
+    media_type: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    media_mime: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    media_size: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    media_data: Mapped[Optional[bytes]] = mapped_column(
+        LargeBinary().with_variant(LONGBLOB(), "mysql"), nullable=True, deferred=True
+    )
+
+    # GIFs are picked from an external library (Giphy), so only the link is stored.
+    gif_url: Mapped[Optional[str]] = mapped_column(String(1000), nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now)
+
+    poll_options: Mapped[list["PostPollOption"]] = relationship(
+        "PostPollOption",
+        back_populates="post",
+        cascade="all, delete-orphan",
+        order_by="PostPollOption.position",
+    )
+
+    __table_args__ = (
+        Index("idx_posts_user_id", "user_id"),
+        Index("idx_posts_created_at", "created_at"),
+    )
+
+
+class PostPollOption(Base):
+    __tablename__ = "post_poll_options"
+
+    option_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    post_id: Mapped[int] = mapped_column(
+        ForeignKey("posts.post_id", ondelete="CASCADE"), nullable=False
+    )
+    text: Mapped[str] = mapped_column(String(100), nullable=False)
+    position: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+    post: Mapped["Post"] = relationship("Post", back_populates="poll_options")
+
+    __table_args__ = (Index("idx_ppo_post_id", "post_id"),)
+
+
+class PostPollVote(Base):
+    """One vote per user per poll."""
+
+    __tablename__ = "post_poll_votes"
+
+    vote_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    post_id: Mapped[int] = mapped_column(
+        ForeignKey("posts.post_id", ondelete="CASCADE"), nullable=False
+    )
+    option_id: Mapped[int] = mapped_column(
+        ForeignKey("post_poll_options.option_id", ondelete="CASCADE"), nullable=False
+    )
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.user_id", ondelete="CASCADE"), nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now)
+
+    __table_args__ = (
+        UniqueConstraint("post_id", "user_id", name="uq_post_poll_votes_post_user"),
+        Index("idx_ppv_option_id", "option_id"),
+    )
 
