@@ -68,3 +68,23 @@ def get_public_profile(
         "is_me": is_me,
         "joined_at": user.created_at.isoformat() if user.created_at else None,
     }
+
+
+@router.get("/by-username/{username}/posts")
+def get_user_public_posts(
+    username: str,
+    limit: int = 30,
+    offset: int = 0,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Fetch public posts uploaded by this user (including admin posts) for their profile page."""
+    from app.common.services.post_service import PostService
+    return PostService.get_user_posts(
+        username_or_id=username,
+        db=db,
+        current_user=current_user,
+        limit=limit,
+        offset=offset,
+    )
+

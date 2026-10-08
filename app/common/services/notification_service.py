@@ -58,8 +58,15 @@ class NotificationService:
                 if lby: likes.add((sid, lby.lower()))
                 if uid: likes.add((sid, uid))
 
+        candidate_uids = set(follower_ids)
+        if dms:
+            candidate_uids.update(d.sender_id for d in dms.values())
+        if dm_ids:
+            candidate_uids.update(dm_ids)
+
         user_filter = [func.lower(User.username).in_([un.lower() for un in unames])] if unames else []
-        if follower_ids: user_filter.append(User.user_id.in_(list(follower_ids)))
+        if candidate_uids:
+            user_filter.append(User.user_id.in_(list(candidate_uids)))
         users_by_name, users_by_id = {}, {}
         if user_filter:
             for u in db.execute(select(User).where(or_(*user_filter) if len(user_filter) > 1 else user_filter[0])).scalars().all():
@@ -100,7 +107,11 @@ class NotificationService:
         result: List[NotificationResponse] = []
         for n, u in active_notifs:
             dm = dms.get(n.reference_id)
-            actor = (users_by_id.get(dm.sender_id) if dm else None) or (users_by_id.get(n.reference_id) if n.type == "follow" else u)
+            actor = (
+                (users_by_id.get(dm.sender_id) if dm else None)
+                or (users_by_id.get(n.reference_id) if (n.type in ("follow", "new_message", "message_react") and n.reference_id in users_by_id) else None)
+                or u
+            )
             result.append(NotificationResponse(
                 id=n.id,
                 user_id=n.user_id,
@@ -113,47 +124,6 @@ class NotificationService:
                 actor_username=actor.username if actor else None,
             ))
 
-    
-        unread_dms = (
-            db.query(DirectMessage)
-            .filter(DirectMessage.receiver_id == user_id, DirectMessage.read_at.is_(None), DirectMessage.kind != MESSAGE_KIND_CALL)
-            .order_by(desc(DirectMessage.id))
-            .limit(50)
-            .all()
-        )
 
-        sender_ids = {m.sender_id for m in unread_dms}
-        chat_states = {r.partner_id: r.cleared_before_id for r in db.execute(select(ChatState).where(ChatState.user_id == user_id, ChatState.partner_id.in_(list(sender_ids)))).scalars().all()} if sender_ids else {}
-        dm_users = {u.user_id: u for u in db.execute(select(User).where(User.user_id.in_(list(sender_ids)))).scalars().all()} if sender_ids else {}
-
-        for dm in unread_dms:
-            if dm.id <= chat_states.get(dm.sender_id, 0) or dm.id in covered_dm_ids:
-                continue
-
-            sender = dm_users.get(dm.sender_id)
-            sname = (sender.username or sender.full_name or f"User {dm.sender_id}") if sender else f"User {dm.sender_id}"
-            snip = (dm.body or "").strip()[:80]
-            kind = dm.kind or "text"
-
-            if kind == "story_reply":
-                msg_text, notif_type, ref_id = f"{sname} replied to your story: {snip}", "story_reply", dm.story_id or dm.id
-            elif kind == "story_reaction":
-                msg_text, notif_type, ref_id = f"{sname} reacted to your story: {snip}", "story_react", dm.story_id or dm.id
-            else:
-                msg_text, notif_type, ref_id = f"{sname} sent you a message: {snip}", "new_message", dm.id
-
-            result.append(NotificationResponse(
-                id=-(dm.id),
-                user_id=user_id,
-                type=notif_type,
-                message=msg_text,
-                reference_id=ref_id,
-                is_read=False,
-                created_at=_iso(dm.created_at) or _utc_now_iso(),
-                actor_id=dm.sender_id,
-                actor_username=sender.username if sender else None,
-            ))
-
-       
         result.sort(key=lambda n: n.created_at, reverse=True)
         return result[:limit]

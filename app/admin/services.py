@@ -5,6 +5,8 @@ from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import func, desc
 
 from app.common.models.user import User
+from app.common.models.messaging import DirectMessage
+from app.common.models.social import Notification
 from app.common.models.story import (
     Story,
     StoryView,
@@ -186,6 +188,7 @@ class AdminService:
                         full_name=creator.full_name,
                         role=creator.role,
                         verified=True,
+                        is_active=bool(creator.is_active),
                     )
                 story_item = AdminStoryItem(
                     id=story_obj.story_id,
@@ -261,3 +264,59 @@ class AdminService:
         user.is_active = True
         db.commit()
         return {"success": True, "message": f"User {user_id} reinstated by Admin"}
+
+    @staticmethod
+    def warn_story_creator(
+        story_id: int,
+        message: str,
+        current_admin: User,
+        db: Session,
+        target_user_id: Optional[int] = None,
+        warning_type: Optional[str] = "warning",
+    ) -> dict:
+        if not message or not message.strip():
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Warning message cannot be empty.",
+            )
+
+        story = db.get(Story, story_id)
+        if not story:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Story not found")
+
+        recipient_id = target_user_id or story.user_id
+        recipient = db.get(User, recipient_id)
+        if not recipient:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Recipient user not found")
+
+        warning_body = f" [Official Admin Warning - Story #{story_id}]\n\n{message.strip()}"
+        dm = DirectMessage(
+            sender_id=current_admin.user_id,
+            receiver_id=recipient_id,
+            body=warning_body,
+            kind="text",
+            story_id=story_id,
+        )
+        db.add(dm)
+
+        notif_msg = f" Admin Warning regarding Story #{story_id}: {message.strip()[:140]}"
+        notif = Notification(
+            user_id=recipient_id,
+            type="story_warning",
+            message=notif_msg,
+            reference_id=story_id,
+            is_read=False,
+        )
+        db.add(notif)
+        db.commit()
+        db.refresh(dm)
+
+        return {
+            "success": True,
+            "message": f"Warning message sent to @{recipient.username or recipient_id} regarding Story #{story_id}.",
+            "story_id": story_id,
+            "user_id": recipient_id,
+            "dm_id": dm.id,
+            "warning_type": warning_type or "warning",
+        }
+

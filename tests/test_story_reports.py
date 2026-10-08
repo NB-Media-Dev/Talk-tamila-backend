@@ -8,7 +8,6 @@ def test_report_story_with_reason_and_details(
     admin_auth_headers: dict,
     db_session,
 ):
-    # 1. Creator creates a story
     story_payload = {
         "media_url": "https://example.com/test-story.jpg",
         "media_type": "image",
@@ -19,7 +18,6 @@ def test_report_story_with_reason_and_details(
     assert story_res.status_code == 201
     story_id = story_res.json()["id"]
 
-    # 2. User reports story with reason and details
     report_payload = {
         "reason": "Harassment or bullying",
         "details": "This story contains inappropriate harassment targeting individuals.",
@@ -32,13 +30,11 @@ def test_report_story_with_reason_and_details(
     assert report_res.status_code == 200
     assert report_res.json()["success"] is True
 
-    # 3. Verify in database
     db_report = db_session.query(StoryReport).filter(StoryReport.story_id == story_id).first()
     assert db_report is not None
     assert db_report.reason == "Harassment or bullying"
     assert db_report.details == "This story contains inappropriate harassment targeting individuals."
 
-    # 4. Admin fetches story reports endpoint
     admin_reports_res = client.get("/api/admin/stories/reports", headers=admin_auth_headers)
     assert admin_reports_res.status_code == 200
     reports_list = admin_reports_res.json()

@@ -53,12 +53,12 @@ from app.influencer.routes import router as influencer_router
 from app.message.calls import router as calls_router
 from app.message.routes import router as message_router
 from app.profile.routes import router as profile_router
+from app.post.routes import router as post_router
 from app.superadmin.routes import router as superadmin_router
 from app.story.routes import router as story_router
 from app.story.settings_routes import router as story_settings_router
 from app.utils.admin_bootstrap import ensure_admin_user
 from app.utils.seed import seed_db_data
-
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -126,6 +126,75 @@ async def lifespan(app: FastAPI):
                 "ALTER TABLE story_mentions ADD COLUMN x FLOAT NULL",
                 "ALTER TABLE story_mentions ADD COLUMN y FLOAT NULL",
                 "ALTER TABLE story_mentions ADD COLUMN created_at DATETIME DEFAULT CURRENT_TIMESTAMP",
+                "ALTER TABLE posts ADD COLUMN username VARCHAR(100) NULL",
+                "ALTER TABLE posts ADD COLUMN title VARCHAR(255) NULL",
+                "ALTER TABLE posts ADD COLUMN caption LONGTEXT NULL",
+                "ALTER TABLE posts ADD COLUMN media_type VARCHAR(20) NOT NULL DEFAULT 'image'",
+                "ALTER TABLE posts ADD COLUMN media_url LONGTEXT NULL",
+                "ALTER TABLE posts ADD COLUMN thumbnail_url LONGTEXT NULL",
+                "ALTER TABLE posts ADD COLUMN aspect_ratio FLOAT NULL",
+                "ALTER TABLE posts ADD COLUMN platforms TEXT NULL",
+                "ALTER TABLE posts ADD COLUMN tags TEXT NULL",
+                "ALTER TABLE posts ADD COLUMN poll_data TEXT NULL",
+                "ALTER TABLE posts ADD COLUMN audience VARCHAR(50) NOT NULL DEFAULT 'PUBLIC'",
+                "ALTER TABLE posts ADD COLUMN status VARCHAR(20) NOT NULL DEFAULT 'published'",
+                "ALTER TABLE posts ADD COLUMN location VARCHAR(255) NULL",
+                "ALTER TABLE posts ADD COLUMN scheduled_at DATETIME NULL",
+                "ALTER TABLE posts ADD COLUMN views_count INT NOT NULL DEFAULT 0",
+                "ALTER TABLE posts ADD COLUMN likes_count INT NOT NULL DEFAULT 0",
+                "ALTER TABLE posts ADD COLUMN comments_count INT NOT NULL DEFAULT 0",
+                "ALTER TABLE posts ADD COLUMN shares_count INT NOT NULL DEFAULT 0",
+                "ALTER TABLE posts ADD COLUMN saves_count INT NOT NULL DEFAULT 0",
+                "ALTER TABLE posts ADD COLUMN is_deleted BOOLEAN NOT NULL DEFAULT FALSE",
+                "ALTER TABLE posts ADD COLUMN deleted_at DATETIME NULL",
+                "ALTER TABLE posts ADD COLUMN created_at DATETIME DEFAULT CURRENT_TIMESTAMP",
+                "ALTER TABLE posts ADD COLUMN updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP",
+                "CREATE TABLE IF NOT EXISTS post_likes ("
+                "id INT AUTO_INCREMENT PRIMARY KEY, "
+                "post_id INT NOT NULL, "
+                "user_id INT NOT NULL, "
+                "user_name VARCHAR(100) NULL, "
+                "created_at DATETIME DEFAULT CURRENT_TIMESTAMP, "
+                "UNIQUE KEY uq_post_likes_post_user (post_id, user_id), "
+                "INDEX idx_pl_post (post_id), "
+                "INDEX idx_pl_user (user_id)"
+                ")",
+                "CREATE TABLE IF NOT EXISTS post_comments ("
+                "id INT AUTO_INCREMENT PRIMARY KEY, "
+                "post_id INT NOT NULL, "
+                "user_id INT NOT NULL, "
+                "user_name VARCHAR(100) NULL, "
+                "user_avatar TEXT NULL, "
+                "comment_text LONGTEXT NOT NULL, "
+                "parent_comment_id INT NULL, "
+                "created_at DATETIME DEFAULT CURRENT_TIMESTAMP, "
+                "INDEX idx_pc_post (post_id), "
+                "INDEX idx_pc_user (user_id)"
+                ")",
+                "CREATE TABLE IF NOT EXISTS post_shares ("
+                "id INT AUTO_INCREMENT PRIMARY KEY, "
+                "post_id INT NOT NULL, "
+                "user_id INT NOT NULL, "
+                "platform VARCHAR(50) NULL, "
+                "created_at DATETIME DEFAULT CURRENT_TIMESTAMP, "
+                "INDEX idx_ps_post (post_id)"
+                ")",
+                "CREATE TABLE IF NOT EXISTS post_saves ("
+                "id INT AUTO_INCREMENT PRIMARY KEY, "
+                "post_id INT NOT NULL, "
+                "user_id INT NOT NULL, "
+                "created_at DATETIME DEFAULT CURRENT_TIMESTAMP, "
+                "UNIQUE KEY uq_post_saves_post_user (post_id, user_id), "
+                "INDEX idx_psave_post (post_id), "
+                "INDEX idx_psave_user (user_id)"
+                ")",
+                "CREATE TABLE IF NOT EXISTS post_views ("
+                "id INT AUTO_INCREMENT PRIMARY KEY, "
+                "post_id INT NOT NULL, "
+                "user_id INT NULL, "
+                "created_at DATETIME DEFAULT CURRENT_TIMESTAMP, "
+                "INDEX idx_pv_post (post_id)"
+                ")",
             ]:
                 try:
                     conn.execute(text(stmt))
@@ -140,7 +209,6 @@ async def lifespan(app: FastAPI):
         finally:
             db.close()
 
-        # The built-in admin login must exist in every environment (also production).
         db = SessionLocal()
         try:
             ensure_admin_user(db)
@@ -149,7 +217,6 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         print(f"Database auto-seeding/migration note: {e}")
     yield
-
 
 app = FastAPI(
     title=settings.PROJECT_NAME,
@@ -170,16 +237,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-
 @app.exception_handler(StarletteHTTPException)
 async def http_exception_handler(request, exc: StarletteHTTPException):
     return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
 
-
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request, exc: RequestValidationError):
     return JSONResponse(status_code=422, content={"detail": jsonable_encoder(exc.errors())})
-
 
 @app.get("/health", tags=["Health"])
 def health_check() -> dict:
@@ -191,19 +255,15 @@ def health_check() -> dict:
         "database": "mysql",
     }
 
-
 auth_router = APIRouter(prefix="/auth", tags=["Auth"])
-
 
 class RefreshRequest(BaseModel):
     refresh_token: str
-
 
 class ChangePasswordPayload(BaseModel):
     old_password: str = Field(..., min_length=1)
     new_password: str = Field(..., min_length=6)
     otp: str = Field(..., min_length=6, max_length=6)
-
 
 AVATAR_ALLOWED_TYPES = {"image/jpeg", "image/png", "image/webp"}
 AVATAR_MAX_DATA_URL_CHARS = 2_800_000 
@@ -214,7 +274,6 @@ MOBILE_MAX_LENGTH = 20
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 MOBILE_RE = re.compile(r"^\+?[0-9\s\-]{7,20}$")
 USERNAME_RE = re.compile(r"^[A-Za-z0-9_.]{3,30}$")
-
 
 def _profile_payload(user: User) -> dict:
     return {
@@ -235,7 +294,6 @@ def _profile_payload(user: User) -> dict:
         "following_count": user.following_count,
         "posts_count": user.posts_count,
     }
-
 
 @auth_router.get("/check-availability", status_code=status.HTTP_200_OK)
 def check_availability(
@@ -276,7 +334,6 @@ def check_availability(
 
     return result
 
-
 @auth_router.post("/signup", status_code=status.HTTP_201_CREATED)
 def signup(payload: RegisterRequest, db: Session = Depends(get_db)) -> dict:
     user = AuthService.register(db, payload)
@@ -295,16 +352,13 @@ def signup(payload: RegisterRequest, db: Session = Depends(get_db)) -> dict:
         **user_dict,
     }
 
-
 @auth_router.post("/register", status_code=status.HTTP_201_CREATED)
 def register_alias(payload: RegisterRequest, db: Session = Depends(get_db)) -> dict:
     return signup(payload, db)
 
-
 @auth_router.get("/me", status_code=status.HTTP_200_OK)
 def get_me_alias(current_user: User = Depends(get_current_user)) -> dict:
     return _profile_payload(current_user)
-
 
 login_schema_extra = {
     "requestBody": {
@@ -349,7 +403,6 @@ def get_profile(
     payload["followers_count"] = live_followers
     payload["following_count"] = live_following
     return payload
-
 
 @auth_router.put("/profile", status_code=status.HTTP_200_OK)
 async def update_profile(
@@ -446,7 +499,6 @@ async def update_profile(
         if current_user.profile is not None:
             current_user.profile.username = username
 
-
         my_story_ids = select(Story.story_id).where(Story.user_id == uid)
         db.query(Story).filter(Story.user_id == uid).update(
             {Story.username: username}, synchronize_session=False)
@@ -467,7 +519,6 @@ async def update_profile(
     db.refresh(current_user)
 
     return _profile_payload(current_user)
-
 
 @auth_router.post("/login", openapi_extra=login_schema_extra, status_code=status.HTTP_200_OK)
 async def login(request: Request, db: Session = Depends(get_db)) -> dict:
@@ -549,7 +600,6 @@ async def login(request: Request, db: Session = Depends(get_db)) -> dict:
         "role": user.role,
     }
 
-
 @auth_router.post("/refresh")
 def refresh_token(payload: RefreshRequest, db: Session = Depends(get_db)) -> dict:
     try:
@@ -572,7 +622,6 @@ def refresh_token(payload: RefreshRequest, db: Session = Depends(get_db)) -> dic
         "token_type": "bearer",
     }
 
-
 @auth_router.post("/change-password/request-otp")
 def request_change_password_otp(
     current_user: User = Depends(get_current_user),
@@ -580,7 +629,6 @@ def request_change_password_otp(
 ) -> dict:
     masked = AuthService.send_change_password_otp(db, current_user)
     return {"success": True, "message": f"We sent a 6-digit code to {masked}. It expires in 10 minutes."}
-
 
 @auth_router.post("/change-password")
 def change_password(
@@ -600,21 +648,17 @@ def forgot_password(payload: ForgotPasswordRequest, db: Session = Depends(get_db
     AuthService.create_otp(db, payload.identifier)
     return {"success": True, "message": "A 6-digit code has been sent to your registered email."}
 
-
 @auth_router.post("/verify-otp")
 def verify_otp(payload: VerifyOtpRequest, db: Session = Depends(get_db)) -> dict:
     AuthService.verify_otp(db, payload.identifier, payload.otp)
     return {"success": True, "message": "OTP verified."}
-
 
 @auth_router.post("/reset-password")
 def reset_password_endpoint(payload: ResetPasswordRequest, db: Session = Depends(get_db)) -> dict:
     AuthService.reset_password_with_otp(db, payload.identifier, payload.otp, payload.new_password)
     return {"success": True, "message": "Password reset successfully."}
 
-
 notification_router = APIRouter(prefix="/notifications", tags=["Notifications"])
-
 
 @notification_router.get("", summary="Get current user's notifications")
 def get_notifications(
@@ -623,7 +667,6 @@ def get_notifications(
     db: Session = Depends(get_db),
 ):
     return NotificationService.get_user_notifications(current_user.user_id, db, limit)
-
 
 @notification_router.patch("/{notification_id}/read", summary="Mark a notification as read")
 def mark_notification_read(
@@ -641,7 +684,6 @@ def mark_notification_read(
     db.commit()
     return {"success": True}
 
-
 @notification_router.patch("/read-all", summary="Mark all notifications as read")
 def mark_all_notifications_read(
     current_user: User = Depends(get_current_user),
@@ -653,7 +695,6 @@ def mark_all_notifications_read(
     ).update({"is_read": True})
     db.commit()
     return {"success": True}
-
 
 @notification_router.delete("/{notification_id}", summary="Delete a notification")
 def delete_notification(
@@ -675,6 +716,7 @@ routers = [
     auth_router,
     story_router,
     story_settings_router,
+    post_router,
     message_router,
     calls_router,
     profile_router,

@@ -48,10 +48,8 @@ logger = logging.getLogger("talktamila.story_service")
 DEFAULT_DURATION_HOURS = 24
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".avi", ".mkv", ".webm", ".m4v"}
 
-
 def utc_now() -> datetime:
     return datetime.now(timezone.utc)
-
 
 def format_iso(dt: Optional[datetime]) -> Optional[str]:
     if not dt:
@@ -60,12 +58,10 @@ def format_iso(dt: Optional[datetime]) -> Optional[str]:
         return dt.replace(tzinfo=timezone.utc).isoformat()
     return dt.isoformat()
 
-
 def make_naive(dt: datetime) -> datetime:
     if dt.tzinfo is not None:
         return dt.astimezone(timezone.utc).replace(tzinfo=None)
     return dt
-
 
 def get_time_ago(dt: Optional[datetime]) -> str:
     if not dt:
@@ -85,7 +81,6 @@ def get_time_ago(dt: Optional[datetime]) -> str:
         return f"{hours}h ago"
     days = hours // 24
     return f"{days}d ago"
-
 
 async def file_to_base64_data_url(file: UploadFile) -> Tuple[str, str]:
     content = await file.read()
@@ -114,7 +109,6 @@ async def file_to_base64_data_url(file: UploadFile) -> Tuple[str, str]:
     b64 = base64.b64encode(content).decode("ascii")
     data_url = f"data:{content_type};base64,{b64}"
     return data_url, media_type
-
 
 def fetch_batch_story_stats(story_ids: List[int], current_user_id: Optional[int], db: Session) -> Dict[str, Any]:
     if not story_ids:
@@ -149,7 +143,6 @@ def fetch_batch_story_stats(story_ids: List[int], current_user_id: Optional[int]
         "liked_by_me": liked_by_me,
     }
 
-
 def extract_mentioned_usernames(text: Optional[str]) -> List[str]:
     if not text:
         return []
@@ -162,7 +155,6 @@ def extract_mentioned_usernames(text: Optional[str]) -> List[str]:
             seen.add(low)
             result.append(m)
     return result
-
 
 def process_and_create_mentions(
     db: Session,
@@ -207,7 +199,7 @@ def process_and_create_mentions(
     created_mentions = []
 
     for target in target_users:
-        # Check blocking
+       
         is_blocked = db.query(UserBlock).filter(
             or_(
                 and_(UserBlock.blocker_id == current_user.id, UserBlock.blocked_id == target.user_id),
@@ -228,6 +220,7 @@ def process_and_create_mentions(
         existing = db.query(StoryMention).filter(
             StoryMention.story_id == story.story_id,
             StoryMention.mentioned_user_id == target.user_id,
+            StoryMention.created_by_user_id == current_user.id,
         ).first()
 
         if not existing:
@@ -243,7 +236,6 @@ def process_and_create_mentions(
             db.add(mention)
             created_mentions.append(mention)
 
-            # Send Notification ONLY to mentioned user (STORY_MENTION)
             if target.user_id != current_user.id:
                 notif = Notification(
                     user_id=target.user_id,
@@ -258,7 +250,6 @@ def process_and_create_mentions(
     db.commit()
     return created_mentions
 
-
 def is_story_root_active(s: Story, db: Session, now_naive: datetime) -> bool:
     if not s.original_story_id or s.original_story_id == s.story_id:
         return True
@@ -266,7 +257,6 @@ def is_story_root_active(s: Story, db: Session, now_naive: datetime) -> bool:
     if not root or root.is_deleted or (root.expires_at and root.expires_at <= now_naive):
         return False
     return True
-
 
 def build_story_item(
     story: Story,
@@ -366,9 +356,19 @@ def build_story_item(
 
     can_reshare = False
     if current_user_id and current_user_id != story.user_id and is_active:
-        # User can only re-share if explicitly mentioned in THIS specific story
         is_mentioned = any(m.mentioned_user_id == current_user_id for m in mentions_data)
-        can_reshare = is_mentioned
+        if is_mentioned:
+            orig_id = story.original_story_id or story.story_id
+            existing_active = db.query(Story.story_id).filter(
+                Story.user_id == current_user_id,
+                or_(
+                    Story.parent_story_id == story.story_id,
+                    Story.original_story_id == orig_id,
+                ),
+                Story.is_deleted == False,
+                Story.expires_at > now_naive,
+            ).first()
+            can_reshare = (existing_active is None)
 
     return StoryItemResponse(
         story_id=story.story_id,
@@ -411,7 +411,6 @@ def build_story_item(
         status=story.status or ("deleted" if story.is_deleted else ("expired" if not is_active else "active")),
     )
 
-
 def normalize_audience(aud: Optional[Any], is_admin: bool = False) -> str:
     if is_admin:
         return "PUBLIC"
@@ -424,7 +423,6 @@ def normalize_audience(aud: Optional[Any], is_admin: bool = False) -> str:
     if val in ("FOLLOWER", "FOLLOWERS"):
         return "FOLLOWERS"
     return "PUBLIC"
-
 
 def story_to_slide(story_item: StoryItemResponse, creator_name: str) -> StorySlideResponse:
     music_label = None
@@ -440,7 +438,7 @@ def story_to_slide(story_item: StoryItemResponse, creator_name: str) -> StorySli
         caption=story_item.caption,
         content=story_item.content,
         audience=story_item.audience or "PUBLIC",
-        duration=5000,
+        duration=30000,
         created_at=story_item.created_at,
         expires_at=story_item.expires_at,
         liked=story_item.liked_by_me,
@@ -460,7 +458,6 @@ def story_to_slide(story_item: StoryItemResponse, creator_name: str) -> StorySli
         mentions=story_item.mentions,
         status=story_item.status,
     )
-
 
 class StoryService:
     @staticmethod
@@ -549,7 +546,7 @@ class StoryService:
         theme_val = (getattr(payload, "theme", "insta") or "insta").strip().lower()
         media_url = getattr(payload, "media_url", None) or f"gradient:{theme_val}"
         caption_val = getattr(payload, "caption", None) or getattr(payload, "content", None)
-
+        
         story = Story(
             user_id=current_user.id,
             username=current_user.username,
@@ -636,15 +633,17 @@ class StoryService:
             )
         )
 
+        caller_id = int(getattr(current_user, "user_id", None) or getattr(current_user, "id", None))
+        muted_ids = [
+            r[0] for r in db.query(StoryMute.muted_user_id).filter(StoryMute.user_id == caller_id).all()
+        ]
+
         if not current_user.is_admin:
             following_ids = [
-                r[0] for r in db.query(Follow.following_id).filter(Follow.follower_id == current_user.id).all()
+                r[0] for r in db.query(Follow.following_id).filter(Follow.follower_id == caller_id).all()
             ]
             cf_creator_ids = [
-                r[0] for r in db.query(CloseFriend.user_id).filter(CloseFriend.friend_id == current_user.id).all()
-            ]
-            muted_ids = [
-                r[0] for r in db.query(StoryMute.muted_user_id).filter(StoryMute.user_id == current_user.id).all()
+                r[0] for r in db.query(CloseFriend.user_id).filter(CloseFriend.friend_id == caller_id).all()
             ]
 
             audience_conditions = [
@@ -666,13 +665,15 @@ class StoryService:
                 )
 
             privacy_condition = or_(
-                Story.user_id == current_user.id,
+                Story.user_id == caller_id,
                 and_(
                     ~Story.user_id.in_(muted_ids) if muted_ids else True,
                     or_(*audience_conditions),
                 ),
             )
             query = query.filter(privacy_condition)
+        elif muted_ids:
+            query = query.filter(or_(Story.user_id == caller_id, ~Story.user_id.in_(muted_ids)))
 
         stories = (
             query.order_by(desc(Story.created_at))
@@ -867,6 +868,15 @@ class StoryService:
         is_following = False
         is_close_friend = False
         if current_user_id and current_user_id != target_user_id:
+            is_muted = (
+                db.query(StoryMute)
+                .filter(StoryMute.user_id == current_user_id, StoryMute.muted_user_id == target_user_id)
+                .first()
+                is not None
+            )
+            if is_muted:
+                return []
+
             is_following = (
                 db.query(Follow)
                 .filter(Follow.follower_id == current_user_id, Follow.following_id == target_user_id)
@@ -1446,22 +1456,39 @@ class StoryService:
             created_at=make_naive(utc_now()),
         )
         db.add(report)
+
+        # Notify all admins about the new story report
+        admin_users = db.query(User).filter(User.role == "admin").all()
+        for admin in admin_users:
+            db.add(
+                Notification(
+                    user_id=admin.user_id,
+                    type="story_report",
+                    message=f"@{current_user.username} reported story #{story_id}: {reason[:100]}",
+                    reference_id=story_id,
+                    is_read=False,
+                    created_at=make_naive(utc_now()),
+                )
+            )
+
         db.commit()
         return {"success": True, "message": "Thank you. Your report has been submitted.", "story_id": story_id}
 
     @staticmethod
     def mute_creator(muted_user_id: int, current_user: User, db: Session) -> dict:
-        if muted_user_id == current_user.id:
+        caller_id = int(getattr(current_user, "user_id", None) or getattr(current_user, "id", None))
+        muted_id = int(muted_user_id)
+        if muted_id == caller_id:
             raise HTTPException(status_code=400, detail="Cannot mute yourself.")
 
         existing = db.query(StoryMute).filter(
-            StoryMute.user_id == current_user.id,
-            StoryMute.muted_user_id == muted_user_id,
+            StoryMute.user_id == caller_id,
+            StoryMute.muted_user_id == muted_id,
         ).first()
         if not existing:
             mute = StoryMute(
-                user_id=current_user.id,
-                muted_user_id=muted_user_id,
+                user_id=caller_id,
+                muted_user_id=muted_id,
                 created_at=make_naive(utc_now()),
             )
             db.add(mute)
@@ -1469,15 +1496,17 @@ class StoryService:
         return {
             "success": True,
             "message": "Stories from this user muted.",
-            "muted_user_id": muted_user_id,
+            "muted_user_id": muted_id,
             "is_muted": True,
         }
 
     @staticmethod
     def unmute_creator(muted_user_id: int, current_user: User, db: Session) -> dict:
+        caller_id = int(getattr(current_user, "user_id", None) or getattr(current_user, "id", None))
+        muted_id = int(muted_user_id)
         existing = db.query(StoryMute).filter(
-            StoryMute.user_id == current_user.id,
-            StoryMute.muted_user_id == muted_user_id,
+            StoryMute.user_id == caller_id,
+            StoryMute.muted_user_id == muted_id,
         ).first()
         if existing:
             db.delete(existing)
@@ -1485,14 +1514,15 @@ class StoryService:
         return {
             "success": True,
             "message": "Stories from this user unmuted.",
-            "muted_user_id": muted_user_id,
+            "muted_user_id": muted_id,
             "is_muted": False,
         }
 
     @staticmethod
     def get_muted_creators(current_user: User, db: Session) -> List[int]:
-        rows = db.query(StoryMute.muted_user_id).filter(StoryMute.user_id == current_user.id).all()
-        return [r[0] for r in rows]
+        caller_id = int(getattr(current_user, "user_id", None) or getattr(current_user, "id", None))
+        rows = db.query(StoryMute.muted_user_id).filter(StoryMute.user_id == caller_id).all()
+        return [int(r[0]) for r in rows]
 
     @staticmethod
     def follow_user(follower_id: int, following_id: int, db: Session) -> dict:
@@ -1565,7 +1595,6 @@ class StoryService:
             "is_following": False,
             "followers_count": target.followers_count if target else 0,
         }
-
 
     @staticmethod
     def get_suggestions(current_user: User, db: Session, limit: int = 10) -> List[dict]:
@@ -1678,7 +1707,6 @@ class StoryService:
         story.deleted_at = now_naive
         story.status = "deleted"
 
-        # Cascade invalidation: when original story is deleted, all derived stories become unavailable!
         derived_stories = db.query(Story).filter(
             or_(
                 Story.original_story_id == story_id,
@@ -1710,7 +1738,6 @@ class StoryService:
         if source_story.expires_at and source_story.expires_at <= now_naive:
             raise HTTPException(status_code=400, detail="Cannot re-share an expired story.")
 
-        # Determine original story & original owner
         if source_story.original_story_id and source_story.original_story_id != source_story.story_id:
             root_story = db.get(Story, source_story.original_story_id)
             if not root_story or root_story.is_deleted:
@@ -1723,7 +1750,6 @@ class StoryService:
             orig_story_id = source_story.story_id
             orig_owner_id = source_story.user_id
 
-        # Privacy and Block Check
         for check_uid in {orig_owner_id, source_story.user_id}:
             if check_uid and check_uid != current_user.id:
                 is_blocked = db.query(UserBlock).filter(
@@ -1731,11 +1757,10 @@ class StoryService:
                         and_(UserBlock.blocker_id == current_user.id, UserBlock.blocked_id == check_uid),
                         and_(UserBlock.blocker_id == check_uid, UserBlock.blocked_id == current_user.id),
                     )
-                ).first() is not None
+                ) .first() is not None
                 if is_blocked:
                     raise HTTPException(status_code=403, detail="Cannot re-share this story due to privacy/block restrictions.")
 
-        # CRITICAL AUTHORIZATION: Only the user specifically mentioned in THIS story can re-share it!
         has_mention = db.query(StoryMention).filter(
             StoryMention.story_id == source_story.story_id,
             StoryMention.mentioned_user_id == current_user.id,
@@ -1745,6 +1770,22 @@ class StoryService:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="RESHARE_NOT_ALLOWED: You can only re-share stories where you were explicitly mentioned."
+            )
+
+        existing_active_reshare = db.query(Story.story_id).filter(
+            Story.user_id == current_user.id,
+            or_(
+                Story.parent_story_id == source_story.story_id,
+                Story.original_story_id == orig_story_id,
+            ),
+            Story.is_deleted == False,
+            Story.expires_at > now_naive,
+        ).first()
+
+        if existing_active_reshare:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="ALREADY_RESHARED: You already have this mentioned story active on your profile. You can only re-share it again after deleting your active story.",
             )
 
         new_caption = getattr(payload, "caption", None) if payload else None
@@ -1780,8 +1821,6 @@ class StoryService:
         db.commit()
         db.refresh(new_story)
 
-        # Send STORY_SHARED notification ONLY to the original Story owner
-        # Never send STORY_SHARED to intermediate sharers!
         if orig_owner_id and orig_owner_id != current_user.id:
             db.add(
                 Notification(
@@ -1795,14 +1834,20 @@ class StoryService:
             )
             db.commit()
 
-        # Process any mentions in new re-shared story (e.g. B mentions C)
         mentions_input = getattr(payload, "mentions", None) if payload else None
-        process_and_create_mentions(db, new_story, mentions_input, new_caption, current_user)
+        if mentions_input:
+            process_and_create_mentions(db, new_story, mentions_input, None, current_user)
 
         return build_story_item(new_story, current_user.id, db)
 
     @staticmethod
-    def search_mention_users(q: str, current_user: User, db: Session, limit: int = 20) -> List[MentionUserSearchItem]:
+    def search_mention_users(
+        q: str,
+        current_user: User,
+        db: Session,
+        limit: int = 20,
+        story_id: Optional[int] = None,
+    ) -> List[MentionUserSearchItem]:
         query = db.query(User).filter(User.user_id != current_user.id, User.is_active.is_(True))
         term = q.strip().lstrip("@")
         if term:
@@ -1827,6 +1872,15 @@ class StoryService:
             r[0] for r in db.query(Follow.following_id).filter(Follow.follower_id == current_user.id).all()
         }
 
+        already_mentioned_ids = set()
+        if story_id:
+            already_mentioned_ids = {
+                r[0]
+                for r in db.query(StoryMention.mentioned_user_id)
+                .filter(StoryMention.story_id == story_id)
+                .all()
+            }
+
         results = []
         for u in users:
             if u.user_id in blocked_ids:
@@ -1841,6 +1895,7 @@ class StoryService:
                     role=u.role or "influencer",
                     is_following=u.user_id in following_ids,
                     is_blocked=False,
+                    is_already_mentioned=u.user_id in already_mentioned_ids,
                 )
             )
             if len(results) >= limit:
@@ -1866,7 +1921,7 @@ class StoryService:
         if not target:
             raise HTTPException(status_code=404, detail="User to mention not found.")
 
-        # Check blocking
+       
         is_blocked = db.query(UserBlock).filter(
             or_(
                 and_(UserBlock.blocker_id == current_user.id, UserBlock.blocked_id == mentioned_user_id),
@@ -1876,13 +1931,17 @@ class StoryService:
         if is_blocked:
             raise HTTPException(status_code=400, detail=f"Cannot mention @{target.username}: user is blocked.")
 
-        # Avoid duplicate mention
         existing = db.query(StoryMention).filter(
             StoryMention.story_id == story.story_id,
             StoryMention.mentioned_user_id == mentioned_user_id,
+            StoryMention.created_by_user_id == current_user.id,
         ).first()
         if existing:
-            return {"success": True, "message": f"@{target.username} is already mentioned in this story."}
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"You have already mentioned @{target.username}. "
+                    
+            )
 
         mention = StoryMention(
             story_id=story.story_id,

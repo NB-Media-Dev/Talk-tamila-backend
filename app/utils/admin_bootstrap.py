@@ -24,9 +24,7 @@ ADMIN_PASSWORD = "admin123"
 ADMIN_FIRST_NAME = "Admin"
 ADMIN_LAST_NAME = "Tamil"
 ADMIN_DOB = date(1996, 6, 15)
-# mobile_no must be unique, so if the first number is already taken the next one is used.
 ADMIN_MOBILE_CANDIDATES = ("9876543210", "9000000001", "9000000002")
-
 
 def ensure_admin_user(db: Session) -> None:
     existing = (
@@ -36,7 +34,6 @@ def ensure_admin_user(db: Session) -> None:
     )
 
     if existing is not None:
-        # Never touch the password. Only make sure the account can actually be used.
         changed = False
         if existing.role != "admin":
             existing.role = "admin"
@@ -67,7 +64,7 @@ def ensure_admin_user(db: Session) -> None:
         is_active=True,
     )
     db.add(admin)
-    db.flush()  # gives the new user its id, needed for the profile row
+    db.flush()
     db.add(
         Profile(
             user_id=admin.user_id,

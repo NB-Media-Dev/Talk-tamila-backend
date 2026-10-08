@@ -48,3 +48,10 @@ class AdminReportItem(BaseModel):
     created_at: str
     story: Optional[AdminStoryItem] = None
     model_config = ConfigDict(from_attributes=True)
+
+
+class AdminStoryWarningRequest(BaseModel):
+    user_id: Optional[int] = None
+    message: str
+    warning_type: Optional[str] = "warning"
+

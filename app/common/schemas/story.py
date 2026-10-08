@@ -33,7 +33,7 @@ class StorySlideResponse(BaseModel):
     caption: Optional[str] = None
     content: Optional[str] = None
     audience: Optional[str] = "PUBLIC"
-    duration: int = 5000
+    duration: int = 30000
     created_at: Optional[str] = None
     expires_at: Optional[str] = None
     liked: bool = False
@@ -64,6 +64,7 @@ class StoryUserResponse(BaseModel):
     full_name: Optional[str] = None
     role: str = "influencer"
     verified: bool = True
+    is_active: bool = True
     model_config = ConfigDict(from_attributes=True)
 
 
@@ -218,8 +219,8 @@ class StoryMuteResponse(BaseModel):
 
 
 class StoryCreateRequest(BaseModel):
-    content: Optional[str] = Field(default=None, max_length=2200, description="Story content / text overlay")
-    caption: Optional[str] = Field(default=None, max_length=2200, description="Story caption (alias for content)")
+    content: Optional[str] = Field(default=None, max_length=1000, description="Story content / text overlay")
+    caption: Optional[str] = Field(default=None, max_length=1000, description="Story caption (alias for content)")
     audience: StoryAudienceEnum = Field(default=StoryAudienceEnum.PUBLIC, description="Audience: PUBLIC, FOLLOWERS, CLOSE_FRIENDS")
     media_url: Optional[str] = Field(default=None, description="Media URL or gradient placeholder")
     media_type: Optional[str] = Field(default="image", description="Media type: image, video, text")
@@ -247,8 +248,8 @@ class StoryJsonCreateRequest(StoryCreateRequest):
 
 
 class StoryTextCreateRequest(BaseModel):
-    caption: str = Field(..., min_length=1, max_length=2200)
-    content: Optional[str] = Field(default=None, max_length=2200)
+    caption: str = Field(..., min_length=1, max_length=300)
+    content: Optional[str] = Field(default=None, max_length=300)
     theme: Optional[str] = "insta"
     media_url: Optional[str] = None
     audience: StoryAudienceEnum = Field(default=StoryAudienceEnum.PUBLIC, description="Audience: PUBLIC, FOLLOWERS, CLOSE_FRIENDS")
@@ -272,8 +273,8 @@ class StoryTextCreateRequest(BaseModel):
 
 
 class StoryReshareRequest(BaseModel):
-    caption: Optional[str] = Field(default=None, max_length=2200)
-    content: Optional[str] = Field(default=None, max_length=2200)
+    caption: Optional[str] = Field(default=None, max_length=1000)
+    content: Optional[str] = Field(default=None, max_length=1000)
     audience: StoryAudienceEnum = Field(default=StoryAudienceEnum.PUBLIC)
     mentions: Optional[List[StoryMentionInput]] = None
     music_id: Optional[int] = None
@@ -302,6 +303,7 @@ class MentionUserSearchItem(BaseModel):
     role: str = "influencer"
     is_following: bool = False
     is_blocked: bool = False
+    is_already_mentioned: bool = False
 
 
 class StoryAddMentionRequest(BaseModel):
@@ -311,8 +313,8 @@ class StoryAddMentionRequest(BaseModel):
 
 
 class StoryPatchRequest(BaseModel):
-    caption: Optional[str] = Field(default=None, max_length=2200)
-    content: Optional[str] = Field(default=None, max_length=2200)
+    caption: Optional[str] = Field(default=None, max_length=1000)
+    content: Optional[str] = Field(default=None, max_length=1000)
     audience: Optional[StoryAudienceEnum] = None
 
 

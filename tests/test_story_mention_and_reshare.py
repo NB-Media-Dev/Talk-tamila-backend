@@ -9,11 +9,9 @@ from app.common.models.story import Story, StoryMention
 from app.common.models.user import User
 from app.core.security import create_access_token
 
-
 def get_auth_headers(user_id: int) -> dict:
     token = create_access_token(user_id)
     return {"Authorization": f"Bearer {token}"}
-
 
 def test_story_mention_and_reshare_chain(client: TestClient, db_session: Session):
     """
@@ -39,8 +37,6 @@ def test_story_mention_and_reshare_chain(client: TestClient, db_session: Session
     -> A receives: 'D shared your story' (STORY_SHARED)
     -> B and C do NOT receive STORY_SHARED
     """
-    # 1. Setup Users A, B, C, D
-    # Seed users: 2=Arjun (A), 3=Priya (B), 4=Karthik (C), 5=Swathi (D)
     user_a = db_session.get(User, 2)
     user_b = db_session.get(User, 3)
     user_c = db_session.get(User, 4)
@@ -51,9 +47,6 @@ def test_story_mention_and_reshare_chain(client: TestClient, db_session: Session
     headers_c = get_auth_headers(user_c.user_id)
     headers_d = get_auth_headers(user_d.user_id)
 
-    # -------------------------------------------------------------
-    # Step 1: User A creates Story and mentions User B
-    # -------------------------------------------------------------
     res_a = client.post(
         "/api/v1/stories",
         json={
@@ -68,20 +61,15 @@ def test_story_mention_and_reshare_chain(client: TestClient, db_session: Session
     story_a_data = res_a.json()
     story_a_id = story_a_data["id"]
 
-    # Verify B receives STORY_MENTION
     notifs_b = client.get("/api/v1/notifications", headers=headers_b).json()
     mention_b = next((n for n in notifs_b if n["type"] == "STORY_MENTION" and n["reference_id"] == story_a_id), None)
     assert mention_b is not None
     assert f"{user_a.username} mentioned you in their story" in mention_b["message"]
     assert mention_b["actor_id"] == user_a.user_id
 
-    # Verify A did not receive STORY_MENTION
     notifs_a = client.get("/api/v1/notifications", headers=headers_a).json()
     assert not any(n["type"] == "STORY_MENTION" and n["reference_id"] == story_a_id for n in notifs_a)
 
-    # -------------------------------------------------------------
-    # Step 2: B shares A's Story and mentions C
-    # -------------------------------------------------------------
     res_b = client.post(
         f"/api/v1/stories/{story_a_id}/reshare",
         json={
@@ -95,30 +83,23 @@ def test_story_mention_and_reshare_chain(client: TestClient, db_session: Session
     story_b_data = res_b.json()
     story_b_id = story_b_data["id"]
 
-    # Lineage check on Story B
     assert story_b_data["parent_story_id"] == story_a_id
     assert story_b_data["original_story_id"] == story_a_id
     assert story_b_data["original_owner_id"] == user_a.user_id
     assert story_b_data["is_reshare"] is True
 
-    # Verify A receives STORY_SHARED: "B shared your story"
     notifs_a = client.get("/api/v1/notifications", headers=headers_a).json()
     share_a1 = next((n for n in notifs_a if n["type"] == "STORY_SHARED" and n["reference_id"] == story_b_id), None)
     assert share_a1 is not None
     assert f"{user_b.username} shared your story" in share_a1["message"]
 
-    # Verify C receives STORY_MENTION: "B mentioned you in their story"
     notifs_c = client.get("/api/v1/notifications", headers=headers_c).json()
     mention_c = next((n for n in notifs_c if n["type"] == "STORY_MENTION" and n["reference_id"] == story_b_id), None)
     assert mention_c is not None
     assert f"{user_b.username} mentioned you in their story" in mention_c["message"]
 
-    # Verify A did NOT receive mention notification for C
     assert not any(n["type"] == "STORY_MENTION" and n["reference_id"] == story_b_id for n in notifs_a)
 
-    # -------------------------------------------------------------
-    # Step 3: C shares B's Story and mentions D
-    # -------------------------------------------------------------
     res_c = client.post(
         f"/api/v1/stories/{story_b_id}/reshare",
         json={
@@ -132,31 +113,24 @@ def test_story_mention_and_reshare_chain(client: TestClient, db_session: Session
     story_c_data = res_c.json()
     story_c_id = story_c_data["id"]
 
-    # Lineage check on Story C
     assert story_c_data["parent_story_id"] == story_b_id
     assert story_c_data["original_story_id"] == story_a_id
     assert story_c_data["original_owner_id"] == user_a.user_id
     assert story_c_data["is_reshare"] is True
 
-    # Verify A receives STORY_SHARED: "C shared your story"
     notifs_a = client.get("/api/v1/notifications", headers=headers_a).json()
     share_a2 = next((n for n in notifs_a if n["type"] == "STORY_SHARED" and n["reference_id"] == story_c_id), None)
     assert share_a2 is not None
     assert f"{user_c.username} shared your story" in share_a2["message"]
 
-    # Verify B did NOT receive STORY_SHARED
     notifs_b = client.get("/api/v1/notifications", headers=headers_b).json()
     assert not any(n["type"] == "STORY_SHARED" and n["reference_id"] == story_c_id for n in notifs_b)
 
-    # Verify D receives STORY_MENTION: "C mentioned you in their story"
     notifs_d = client.get("/api/v1/notifications", headers=headers_d).json()
     mention_d = next((n for n in notifs_d if n["type"] == "STORY_MENTION" and n["reference_id"] == story_c_id), None)
     assert mention_d is not None
     assert f"{user_c.username} mentioned you in their story" in mention_d["message"]
 
-    # -------------------------------------------------------------
-    # Step 4: D shares C's Story
-    # -------------------------------------------------------------
     res_d = client.post(
         f"/api/v1/stories/{story_c_id}/reshare",
         json={
@@ -169,38 +143,29 @@ def test_story_mention_and_reshare_chain(client: TestClient, db_session: Session
     story_d_data = res_d.json()
     story_d_id = story_d_data["id"]
 
-    # Lineage check on Story D
     assert story_d_data["parent_story_id"] == story_c_id
     assert story_d_data["original_story_id"] == story_a_id
     assert story_d_data["original_owner_id"] == user_a.user_id
     assert story_d_data["is_reshare"] is True
 
-    # Verify A receives STORY_SHARED: "D shared your story"
     notifs_a = client.get("/api/v1/notifications", headers=headers_a).json()
     share_a3 = next((n for n in notifs_a if n["type"] == "STORY_SHARED" and n["reference_id"] == story_d_id), None)
     assert share_a3 is not None
     assert f"{user_d.username} shared your story" in share_a3["message"]
 
-    # Verify B and C did NOT receive STORY_SHARED
     notifs_b = client.get("/api/v1/notifications", headers=headers_b).json()
     assert not any(n["type"] == "STORY_SHARED" and n["reference_id"] == story_d_id for n in notifs_b)
     notifs_c = client.get("/api/v1/notifications", headers=headers_c).json()
     assert not any(n["type"] == "STORY_SHARED" and n["reference_id"] == story_d_id for n in notifs_c)
 
-    # -------------------------------------------------------------
-    # Step 5: Deletion Rule - A deletes original story
-    # -> A's story, B's re-share, C's re-share, D's re-share all become unavailable
-    # -------------------------------------------------------------
     del_res = client.delete(f"/api/v1/stories/{story_a_id}", headers=headers_a)
     assert del_res.status_code == 204
 
-    # Direct access to any derived story must be rejected (404)
     assert client.get(f"/api/v1/stories/{story_a_id}", headers=headers_a).status_code == 404
     assert client.get(f"/api/v1/stories/{story_b_id}", headers=headers_b).status_code == 404
     assert client.get(f"/api/v1/stories/{story_c_id}", headers=headers_c).status_code == 404
     assert client.get(f"/api/v1/stories/{story_d_id}", headers=headers_d).status_code == 404
 
-    # Derived stories must not appear in feeds
     feed_b = client.get("/api/v1/stories/my", headers=headers_b).json()
     assert not any(s["id"] == story_b_id for s in feed_b)
     feed_c = client.get("/api/v1/stories/my", headers=headers_c).json()
@@ -208,14 +173,12 @@ def test_story_mention_and_reshare_chain(client: TestClient, db_session: Session
     feed_d = client.get("/api/v1/stories/my", headers=headers_d).json()
     assert not any(s["id"] == story_d_id for s in feed_d)
 
-    # Re-sharing a deleted story must be rejected
     reshare_deleted = client.post(
         f"/api/v1/stories/{story_a_id}/reshare",
         json={"caption": "Try re-sharing deleted"},
         headers=headers_b,
     )
     assert reshare_deleted.status_code in (400, 404)
-
 
 def test_story_expiration_invalidates_derived_stories(client: TestClient, db_session: Session):
     """Ensure that when original Story expires, all derived stories become unavailable."""
@@ -224,7 +187,6 @@ def test_story_expiration_invalidates_derived_stories(client: TestClient, db_ses
     headers_a = get_auth_headers(user_a.user_id)
     headers_b = get_auth_headers(user_b.user_id)
 
-    # Create original Story A (mentions B)
     res_a = client.post(
         "/api/v1/stories",
         json={
@@ -237,7 +199,6 @@ def test_story_expiration_invalidates_derived_stories(client: TestClient, db_ses
     ).json()
     story_a_id = res_a["id"]
 
-    # B re-shares Story A
     res_b = client.post(
         f"/api/v1/stories/{story_a_id}/reshare",
         json={"caption": "Story B re-share"},
@@ -245,19 +206,15 @@ def test_story_expiration_invalidates_derived_stories(client: TestClient, db_ses
     ).json()
     story_b_id = res_b["id"]
 
-    # Verify B's story is currently accessible
     assert client.get(f"/api/v1/stories/{story_b_id}", headers=headers_b).status_code == 200
 
-    # Expire Story A in the database
     story_a = db_session.get(Story, story_a_id)
     story_a.expires_at = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=10)
     db_session.commit()
 
-    # Story A and derived Story B must now be 404
     assert client.get(f"/api/v1/stories/{story_a_id}", headers=headers_a).status_code == 404
     assert client.get(f"/api/v1/stories/{story_b_id}", headers=headers_b).status_code == 404
 
-    # Re-sharing an expired story must be rejected
     reshare_expired = client.post(
         f"/api/v1/stories/{story_a_id}/reshare",
         json={"caption": "Try re-sharing expired"},
@@ -265,21 +222,18 @@ def test_story_expiration_invalidates_derived_stories(client: TestClient, db_ses
     )
     assert reshare_expired.status_code == 400
 
-
 def test_privacy_and_block_restrictions_for_mentions_and_reshare(client: TestClient, db_session: Session):
     """Ensure blocked users cannot be mentioned and blocked users cannot re-share."""
     user_a = db_session.get(User, 2)
-    user_blocked = db_session.get(User, 6) # User 6: Vishwa
+    user_blocked = db_session.get(User, 6)
 
     headers_a = get_auth_headers(user_a.user_id)
     headers_blocked = get_auth_headers(user_blocked.user_id)
 
-    # Block relationship: User A blocks User 6
     block = UserBlock(blocker_id=user_a.user_id, blocked_id=user_blocked.user_id)
     db_session.add(block)
     db_session.commit()
 
-    # User A tries to mention blocked user in Story -> Rejected with 400
     res_mention_blocked = client.post(
         "/api/v1/stories",
         json={
@@ -292,7 +246,6 @@ def test_privacy_and_block_restrictions_for_mentions_and_reshare(client: TestCli
     assert res_mention_blocked.status_code == 400
     assert "blocked" in res_mention_blocked.text.lower()
 
-    # Create unblocked story by A
     res_ok = client.post(
         "/api/v1/stories",
         json={"content": "Clean story", "media_url": "gradient:insta", "audience": "PUBLIC"},
@@ -300,7 +253,6 @@ def test_privacy_and_block_restrictions_for_mentions_and_reshare(client: TestCli
     ).json()
     story_id = res_ok["id"]
 
-    # Blocked user tries to re-share A's story -> Rejected with 403
     res_reshare_blocked = client.post(
         f"/api/v1/stories/{story_id}/reshare",
         json={"caption": "Trying to reshare while blocked"},
@@ -308,22 +260,45 @@ def test_privacy_and_block_restrictions_for_mentions_and_reshare(client: TestCli
     )
     assert res_reshare_blocked.status_code == 403
 
-    # Clean up block
     db_session.delete(block)
     db_session.commit()
 
-
 def test_mention_user_search(client: TestClient, db_session: Session):
-    """Test user autocomplete search for mentions."""
+    """Test user autocomplete search for mentions and is_already_mentioned flag."""
     user_a = db_session.get(User, 2)
+    user_b = db_session.get(User, 3)
     headers_a = get_auth_headers(user_a.user_id)
 
-    res = client.get("/api/v1/stories/mentions/search?q=Priya", headers=headers_a)
+    res = client.get(f"/api/v1/stories/mentions/search?q={user_b.username}", headers=headers_a)
     assert res.status_code == 200
     users = res.json()
     assert len(users) >= 1
-    assert any("Priya" in u["username"] for u in users)
+    target = next((u for u in users if u["user_id"] == user_b.user_id), None)
+    assert target is not None
+    assert target["is_already_mentioned"] is False
 
+    res_story = client.post(
+        "/api/v1/stories/",
+        json={
+            "content": "Story with mention test",
+            "media_url": "gradient:sunset",
+            "audience": "PUBLIC",
+            "mentions": [{"user_id": user_b.user_id, "username": user_b.username}],
+        },
+        headers=headers_a,
+    )
+    assert res_story.status_code == 201
+    story_id = res_story.json()["id"]
+
+    res_search_story = client.get(
+        f"/api/v1/stories/mentions/search?q={user_b.username}&story_id={story_id}",
+        headers=headers_a,
+    )
+    assert res_search_story.status_code == 200
+    users_story = res_search_story.json()
+    target_in_story = next((u for u in users_story if u["user_id"] == user_b.user_id), None)
+    assert target_in_story is not None
+    assert target_in_story["is_already_mentioned"] is True
 
 def test_only_mentioned_story_can_be_reshared(client: TestClient, db_session: Session):
     """
@@ -342,7 +317,6 @@ def test_only_mentioned_story_can_be_reshared(client: TestClient, db_session: Se
     headers_a = get_auth_headers(user_a.user_id)
     headers_b = get_auth_headers(user_b.user_id)
 
-    # 1. A creates Story 1 (no mention)
     res_1 = client.post(
         "/api/v1/stories",
         json={"content": "Story 1 - No mention", "media_url": "gradient:insta", "audience": "PUBLIC"},
@@ -351,7 +325,6 @@ def test_only_mentioned_story_can_be_reshared(client: TestClient, db_session: Se
     assert res_1.status_code == 201
     story_1_id = res_1.json()["id"]
 
-    # 2. A creates Story 2 (mentions B)
     res_2 = client.post(
         "/api/v1/stories",
         json={
@@ -365,7 +338,6 @@ def test_only_mentioned_story_can_be_reshared(client: TestClient, db_session: Se
     assert res_2.status_code == 201
     story_2_id = res_2.json()["id"]
 
-    # 3. A creates Story 3 (no mention)
     res_3 = client.post(
         "/api/v1/stories",
         json={"content": "Story 3 - No mention", "media_url": "gradient:cyber", "audience": "PUBLIC"},
@@ -374,7 +346,6 @@ def test_only_mentioned_story_can_be_reshared(client: TestClient, db_session: Se
     assert res_3.status_code == 201
     story_3_id = res_3.json()["id"]
 
-    # B tries to re-share Story 1 -> REJECTED (403)
     res_b_share_1 = client.post(
         f"/api/v1/stories/{story_1_id}/reshare",
         json={"caption": "Attempting to re-share Story 1"},
@@ -383,7 +354,6 @@ def test_only_mentioned_story_can_be_reshared(client: TestClient, db_session: Se
     assert res_b_share_1.status_code == 403
     assert "RESHARE_NOT_ALLOWED" in res_b_share_1.text
 
-    # B tries to re-share Story 3 -> REJECTED (403)
     res_b_share_3 = client.post(
         f"/api/v1/stories/{story_3_id}/reshare",
         json={"caption": "Attempting to re-share Story 3"},
@@ -392,7 +362,6 @@ def test_only_mentioned_story_can_be_reshared(client: TestClient, db_session: Se
     assert res_b_share_3.status_code == 403
     assert "RESHARE_NOT_ALLOWED" in res_b_share_3.text
 
-    # B re-shares Story 2 -> SUCCESS (201)
     res_b_share_2 = client.post(
         f"/api/v1/stories/{story_2_id}/reshare",
         json={"caption": "Re-sharing Story 2 where I was mentioned"},
@@ -400,4 +369,13 @@ def test_only_mentioned_story_can_be_reshared(client: TestClient, db_session: Se
     )
     assert res_b_share_2.status_code == 201
     assert res_b_share_2.json()["parent_story_id"] == story_2_id
+
+    # Attempting to re-share again while still active on profile should fail with 400 ALREADY_RESHARED
+    res_b_share_2_again = client.post(
+        f"/api/v1/stories/{story_2_id}/reshare",
+        json={"caption": "Attempting to re-share Story 2 again"},
+        headers=headers_b,
+    )
+    assert res_b_share_2_again.status_code == 400
+    assert "ALREADY_RESHARED" in res_b_share_2_again.text
 

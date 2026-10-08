@@ -17,15 +17,12 @@ from typing import List, Set
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session, joinedload
 
-# IMPORTANT: keep app.core imported BEFORE the models. Importing the models
-# first can trigger a circular import (models -> app.core -> models).
 from app.core.dependencies import get_current_user, get_db
 from app.common.models.social import CloseFriend, Follow
 from app.common.models.story import StoryMute
 from app.common.models.user import User
 
 router = APIRouter(prefix="/stories/settings", tags=["Settings"])
-
 
 def _person(u: User) -> dict:
     return {
@@ -38,8 +35,6 @@ def _person(u: User) -> dict:
         "bio": u.bio,
     }
 
-
-# ───────────────────────── Muted creators ─────────────────────────
 @router.get("/muted")
 def list_muted_creators(
     current_user: User = Depends(get_current_user),
@@ -54,7 +49,6 @@ def list_muted_creators(
         .all()
     )
     return [_person(u) for u in users]
-
 
 @router.delete("/muted/{user_id:int}")
 def unmute_creator(
@@ -75,8 +69,6 @@ def unmute_creator(
         db.commit()
     return {"success": True, "muted_user_id": user_id, "is_muted": False}
 
-
-# ───────────────────────── Close friends ─────────────────────────
 @router.get("/close-friends")
 def list_close_friends(
     current_user: User = Depends(get_current_user),
@@ -91,7 +83,6 @@ def list_close_friends(
         .all()
     )
     return [_person(u) for u in users]
-
 
 @router.post("/close-friends/{friend_id:int}")
 def add_close_friend(
@@ -117,7 +108,6 @@ def add_close_friend(
         db.commit()
     return {"success": True, "friend_id": friend_id, "is_close_friend": True}
 
-
 @router.delete("/close-friends/{friend_id:int}")
 def remove_close_friend(
     friend_id: int,
@@ -137,12 +127,9 @@ def remove_close_friend(
         db.commit()
     return {"success": True, "friend_id": friend_id, "is_close_friend": False}
 
-
-# ───────────────────────── Followers / Following ─────────────────────────
 def _my_following_ids(db: Session, me: int) -> Set[int]:
     rows = db.query(Follow.following_id).filter(Follow.follower_id == me).all()
     return {r[0] for r in rows}
-
 
 def _follow_person(u: User, my_following: Set[int]) -> dict:
     data = _person(u)
@@ -150,11 +137,9 @@ def _follow_person(u: User, my_following: Set[int]) -> dict:
     data["is_following"] = u.user_id in my_following
     return data
 
-
 def _ensure_user_exists(db: Session, user_id: int) -> None:
     if db.query(User.user_id).filter(User.user_id == user_id).first() is None:
         raise HTTPException(status_code=404, detail="User not found.")
-
 
 @router.get("/followers/{user_id:int}")
 def list_followers(
@@ -176,7 +161,6 @@ def list_followers(
         .all()
     )
     return [_follow_person(u, mine) for u in users]
-
 
 @router.get("/following/{user_id:int}")
 def list_following(

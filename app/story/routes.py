@@ -353,10 +353,11 @@ def reshare_story(
 def search_mention_users(
     q: str = Query(default=""),
     limit: int = Query(default=20, ge=1, le=50),
+    story_id: Optional[int] = Query(default=None),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> List[MentionUserSearchItem]:
-    return StoryService.search_mention_users(q, current_user, db, limit=limit)
+    return StoryService.search_mention_users(q, current_user, db, limit=limit, story_id=story_id)
 
 
 @router.post("/{story_id:int}/mentions")
@@ -400,6 +401,7 @@ def report_story(
 
 
 @router.post("/mute/{user_id:int}", response_model=StoryMuteResponse)
+@router.post("/users/{user_id:int}/mute", response_model=StoryMuteResponse)
 def mute_creator(
     user_id: int,
     current_user: User = Depends(get_current_user),
@@ -409,6 +411,7 @@ def mute_creator(
 
 
 @router.delete("/mute/{user_id:int}", response_model=StoryMuteResponse)
+@router.delete("/users/{user_id:int}/mute", response_model=StoryMuteResponse)
 def unmute_creator(
     user_id: int,
     current_user: User = Depends(get_current_user),

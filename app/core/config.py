@@ -7,7 +7,6 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 _ENV_FILE = Path(__file__).resolve().parent.parent.parent / ".env"
 
-
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=str(_ENV_FILE),
@@ -34,15 +33,10 @@ class Settings(BaseSettings):
     SMTP_FROM_EMAIL: str = ""
     SMTP_FROM_NAME: str = "Talk Tamila"
 
-
     BREVO_API_KEY: str = ""
 
-    # Web Push (Instagram-style message notifications).
-    # Create the two keys once with:  python scripts/generate_vapid_keys.py
-    # Leave them empty and notifications are simply switched off.
     VAPID_PUBLIC_KEY: str = ""
     VAPID_PRIVATE_KEY: str = ""
-    # Must be "mailto:you@example.com" or an https:// address. Falls back to SMTP_FROM_EMAIL.
     VAPID_SUBJECT: str = ""
 
     BACKEND_CORS_ORIGINS: Union[str, List[str]] = [
@@ -82,6 +76,5 @@ class Settings(BaseSettings):
                 "environment variable when ENVIRONMENT=production."
             )
         return v
-
 
 settings = Settings()

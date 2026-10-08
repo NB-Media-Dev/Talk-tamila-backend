@@ -25,23 +25,16 @@ from app.common.models.social import Follow, Notification
 from app.common.models.story import Story, StoryReply
 from app.common.models.user import User
 
-
-# How many messages someone can send to a person who has NOT accepted their request
-# (Instagram allows 1). Change this number if you want to allow more.
 MAX_REQUEST_MESSAGES = 1
-
 
 def _utc_now_naive() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
-
 def _iso(dt: Optional[datetime]) -> Optional[str]:
     return f"{dt.isoformat()}Z" if dt else None
 
-
 def _escape_like(term: str) -> str:
     return term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-
 
 def _user_card(user: User, following_ids: Set[int]) -> Dict[str, Any]:
     return {
@@ -54,7 +47,6 @@ def _user_card(user: User, following_ids: Set[int]) -> Dict[str, Any]:
         "followers_count": user.followers_count or 0,
         "is_following": user.user_id in following_ids,
     }
-
 
 def _message_dict(
     m: DirectMessage,
@@ -74,7 +66,6 @@ def _message_dict(
         "read_at": _iso(m.read_at),
         "is_mine": m.sender_id == me_id,
     }
-
 
 def _load_stories(db: Session, story_ids: Iterable[Optional[int]]) -> Dict[int, Dict[str, Any]]:
     """Small context card per story. Selects columns only - media_url can be a huge
@@ -103,7 +94,6 @@ def _load_stories(db: Session, story_ids: Iterable[Optional[int]]) -> Dict[int, 
         }
     return cards
 
-
 def _load_reactions(db: Session, message_ids: Iterable[int]) -> Dict[int, List[Dict[str, Any]]]:
     ids = list(message_ids)
     if not ids:
@@ -118,7 +108,6 @@ def _load_reactions(db: Session, message_ids: Iterable[int]) -> Dict[int, List[D
         out.setdefault(mid, []).append({"user_id": uid, "emoji": emoji})
     return out
 
-
 def _serialize(db: Session, messages: List[DirectMessage], me_id: int) -> List[Dict[str, Any]]:
     stories = _load_stories(db, (m.story_id for m in messages))
     reactions = _load_reactions(db, (m.id for m in messages))
@@ -132,9 +121,7 @@ def _serialize(db: Session, messages: List[DirectMessage], me_id: int) -> List[D
         for m in messages
     ]
 
-
 class MessageService:
-    # ---------- helpers ----------
     @staticmethod
     def _following_ids(db: Session, me_id: int, candidate_ids: List[int]) -> Set[int]:
         if not candidate_ids:
@@ -146,7 +133,6 @@ class MessageService:
         ).scalars().all()
         return set(rows)
 
-    # ---------- message requests (Instagram-style) ----------
     @staticmethod
     def _request_partner_ids(db: Session, me_id: int, partner_ids: Iterable[int]) -> Set[int]:
         """Which of `partner_ids` are a *message request* from MY point of view.
@@ -211,9 +197,6 @@ class MessageService:
         request_sent = me_id in MessageService._request_partner_ids(db, other_id, [me_id])
         can_send = True
         if request_sent:
-            # Only count messages I can still see. If I used "Delete chat", those old
-            # messages are hidden from me, so they must not lock me out of a chat that
-            # now looks empty.
             my_state = MessageService._get_chat_state(db, me_id, other_id)
             cleared_before_id = my_state.cleared_before_id if my_state else 0
             sent = db.execute(
@@ -242,7 +225,7 @@ class MessageService:
             try:
                 db.commit()
             except IntegrityError:
-                db.rollback()  # accepted twice at the same moment - already accepted
+                db.rollback()
         return {"success": True, "accepted": True}
 
     @staticmethod
@@ -254,7 +237,6 @@ class MessageService:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "User not found")
         return other
 
-    # ---------- block / mute helpers ----------
     @staticmethod
     def _block_state(db: Session, me_id: int, other_id: int) -> Dict[str, bool]:
         """blocked_by_me: I blocked them. blocked_me: they blocked me."""
@@ -284,7 +266,6 @@ class MessageService:
             is not None
         )
 
-    # ---------- per-viewer chat state (delete chat / mark unread) ----------
     @staticmethod
     def _chat_state_map(db: Session, me_id: int, partner_ids: List[int]) -> Dict[int, ChatState]:
         if not partner_ids:
@@ -314,7 +295,6 @@ class MessageService:
             db.refresh(state)
         return state
 
-    # ---------- cheap poll target ----------
     @staticmethod
     def summary(db: Session, me: User) -> Dict[str, int]:
         latest = db.execute(
@@ -331,7 +311,6 @@ class MessageService:
             )
         ).all()
 
-        # Ignore anything hidden by "delete chat".
         senders = list({sid for sid, _ in unread_rows})
         states = MessageService._chat_state_map(db, me.user_id, senders)
         unread_senders = {
@@ -340,7 +319,6 @@ class MessageService:
             if mid > (states[sid].cleared_before_id if sid in states else 0)
         }
 
-        # Requests are counted separately so they don't inflate the navbar badge.
         request_ids = MessageService._request_partner_ids(db, me.user_id, unread_senders)
         return {
             "latest_message_id": int(latest or 0),
@@ -348,7 +326,6 @@ class MessageService:
             "request_unread": len(request_ids),
         }
 
-    # ---------- inbox ----------
     @staticmethod
     def conversations(db: Session, me: User, limit: int = 100) -> List[Dict[str, Any]]:
         partner_id_expr = case(
@@ -375,7 +352,6 @@ class MessageService:
         ]
         chat_states = MessageService._chat_state_map(db, me.user_id, partner_ids)
 
-        # Count unread messages per partner, ignoring anything hidden by "delete chat".
         unread_id_rows = db.execute(
             select(DirectMessage.sender_id, DirectMessage.id).where(
                 DirectMessage.receiver_id == me.user_id, DirectMessage.read_at.is_(None)
@@ -403,7 +379,7 @@ class MessageService:
             state = chat_states.get(pid)
             cleared_before_id = state.cleared_before_id if state else 0
             if m.id <= cleared_before_id:
-                continue  # this conversation was deleted-for-me and nothing new has arrived since
+                continue
 
             unread_count = unread_counts.get(pid, 0)
             manually_unread = bool(state.manually_unread) if state else False
@@ -421,13 +397,11 @@ class MessageService:
                     },
                     "unread_count": unread_count,
                     "is_unread": unread_count > 0 or manually_unread,
-                    # True = not a mutual follow and not accepted yet -> shown in Requests.
                     "is_request": pid in request_ids,
                 }
             )
         return result
 
-    # ---------- thread ----------
     @staticmethod
     def thread(
         db: Session,
@@ -447,14 +421,11 @@ class MessageService:
             and_(DirectMessage.sender_id == other_id, DirectMessage.receiver_id == me.user_id),
         )
 
-        # "Delete chat" only hides history for the person who deleted it.
         state = MessageService._get_chat_state(db, me.user_id, other_id)
         cleared_before_id = state.cleared_before_id if state else 0
         if cleared_before_id:
             pair = and_(pair, DirectMessage.id > cleared_before_id)
 
-        # Opening the full thread (not a "load older"/poll request) clears any
-        # "mark as unread" flag, same as Instagram.
         if after_id is None and before_id is None and state is not None and state.manually_unread:
             state.manually_unread = False
             db.commit()
@@ -477,8 +448,6 @@ class MessageService:
 
         request = MessageService.request_state(db, me.user_id, other_id)
 
-        # Opening/polling the thread marks the other person's messages as seen - except
-        # for a pending request: like Instagram, they can't tell you looked until you accept.
         marked = 0
         if not request["is_request"]:
             marked = db.execute(
@@ -492,7 +461,7 @@ class MessageService:
             ).rowcount
         if marked:
             db.commit()
-            for m in rows:  # reflect the update in what we return
+            for m in rows:
                 if m.sender_id == other_id and m.read_at is None:
                     db.refresh(m)
 
@@ -516,10 +485,8 @@ class MessageService:
             in_range = db.execute(
                 select(DirectMessage.id).where(pair, DirectMessage.id >= sync_from_id)
             ).scalars().all()
-            # Lets the client drop messages that were unsent since its last poll.
             existing_ids = [int(mid) for mid in in_range]
             found = _load_reactions(db, in_range)
-            # Every message in range gets an entry (possibly empty) so removals propagate.
             reactions_sync = {mid: found.get(mid, []) for mid in in_range}
 
         return {
@@ -532,7 +499,6 @@ class MessageService:
             "request": request,
         }
 
-    # ---------- send ----------
     @staticmethod
     def send(db: Session, me: User, other_id: int, body: str) -> Dict[str, Any]:
         MessageService._get_partner(db, me, other_id)
@@ -542,8 +508,6 @@ class MessageService:
         if state["blocked_me"]:
             raise HTTPException(status.HTTP_403_FORBIDDEN, "You can't send messages to this user.")
 
-        # Message requests: if they don't follow me back (and haven't accepted me), my
-        # message goes to THEIR Requests tab, and I only get a few until they accept.
         req = MessageService.request_state(db, me.user_id, other_id)
         if req["request_sent"] and not req["can_send"]:
             raise HTTPException(
@@ -556,7 +520,6 @@ class MessageService:
         db.commit()
         db.refresh(msg)
 
-        # Create a notification so the receiver sees it in the bell panel.
         try:
             snippet = (body or "").strip()[:80]
             sender_name = me.username or me.full_name or f"User {me.user_id}"
@@ -571,26 +534,21 @@ class MessageService:
             db.add(notif)
             db.commit()
         except Exception:
-            db.rollback()  # notification failure must never break the message
+            db.rollback()
 
         return _message_dict(msg, me.user_id)
 
-    # ---------- unsend ----------
     @staticmethod
     def unsend(db: Session, me: User, message_id: int) -> Dict[str, Any]:
         """Delete a message I sent, for both people (Instagram-style Unsend)."""
         msg = db.get(DirectMessage, message_id)
-        # 404 (not 403) for messages outside my own chats, so ids can't be probed.
         if msg is None or me.user_id not in (msg.sender_id, msg.receiver_id):
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Message not found")
         if msg.sender_id != me.user_id:
             raise HTTPException(status.HTTP_403_FORBIDDEN, "You can only unsend your own messages")
 
-        # Reactions are removed explicitly so this also works if the DB foreign key
-        # was created without ON DELETE CASCADE.
         db.execute(delete(MessageReaction).where(MessageReaction.message_id == message_id))
 
-        # Delete any notifications tied directly to this message
         db.execute(
             delete(Notification).where(
                 Notification.reference_id == message_id,
@@ -598,7 +556,6 @@ class MessageService:
             )
         )
 
-        # If this message was a story reply or story reaction, also clean up story-level notifications
         if msg.story_id:
             username = me.username or ""
             if username:
@@ -623,7 +580,6 @@ class MessageService:
         db.commit()
         return {"success": True, "message_id": message_id}
 
-    # ---------- delete chat (for me only) ----------
     @staticmethod
     def delete_chat(db: Session, me: User, other_id: int) -> Dict[str, Any]:
         """Instagram-style "Delete chat": clears the conversation out of my inbox
@@ -643,7 +599,6 @@ class MessageService:
         db.commit()
         return {"success": True}
 
-    # ---------- block / unblock / mute / report (chat header 3-dot menu) ----------
     @staticmethod
     def block(db: Session, me: User, other_id: int) -> Dict[str, Any]:
         MessageService._get_partner(db, me, other_id)
@@ -657,7 +612,7 @@ class MessageService:
             try:
                 db.commit()
             except IntegrityError:
-                db.rollback()  # blocked twice at the same moment - already blocked
+                db.rollback()
         return {"success": True, "blocked": True}
 
     @staticmethod
@@ -696,7 +651,6 @@ class MessageService:
         db.commit()
         return {"success": True}
 
-    # ---------- mark read / unread (3-dot menu on the inbox row) ----------
     @staticmethod
     def mark_read(db: Session, me: User, other_id: int) -> Dict[str, Any]:
         MessageService._get_partner(db, me, other_id)
@@ -724,7 +678,6 @@ class MessageService:
         db.commit()
         return {"success": True}
 
-    # ---------- call log entries (written by the calls WebSocket) ----------
     @staticmethod
     def log_call(
         db: Session, caller_id: int, callee_id: int, media: str, outcome: str, seconds: int
@@ -740,7 +693,6 @@ class MessageService:
         db.refresh(msg)
         return _message_dict(msg, caller_id)
 
-    # ---------- story replies / reactions arrive as messages ----------
     @staticmethod
     def send_story_message(
         db: Session,
@@ -788,11 +740,9 @@ class MessageService:
         db.refresh(msg)
         return msg
 
-    # ---------- reactions ----------
     @staticmethod
     def _get_reactable_message(db: Session, me: User, message_id: int) -> DirectMessage:
         msg = db.get(DirectMessage, message_id)
-        # 404 (not 403) for messages outside the person's own chats, so ids can't be probed.
         if msg is None or me.user_id not in (msg.sender_id, msg.receiver_id):
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Message not found")
         return msg
@@ -825,7 +775,6 @@ class MessageService:
         try:
             _apply()
         except IntegrityError:
-            # Two taps raced past the existence check; the unique key stopped the second.
             db.rollback()
             _apply()
         return MessageService._reaction_payload(db, message_id)
@@ -843,7 +792,6 @@ class MessageService:
             db.delete(existing)
             db.commit()
         return MessageService._reaction_payload(db, message_id)
-
 
     @staticmethod
     def search_people(
