@@ -13,17 +13,12 @@ from typing import Sequence, Union
 
 from alembic import op
 
-# revision identifiers, used by Alembic.
 revision: str = '830134bbfc1c'
 down_revision: Union[str, None] = 'af44bdacc830'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
-
 def upgrade() -> None:
-    # Keep the earliest row per (user_id, muted_user_id) / (story_id, user_id)
-    # pair; delete the rest. Self-join delete works on MySQL 5.7+ as well as 8,
-    # unlike a window-function approach.
     op.execute("""
         DELETE m1 FROM story_mutes m1
         INNER JOIN story_mutes m2
@@ -45,7 +40,6 @@ def upgrade() -> None:
     op.create_unique_constraint(
         "uq_story_reports_story_user", "story_reports", ["story_id", "user_id"]
     )
-
 
 def downgrade() -> None:
     op.drop_constraint("uq_story_reports_story_user", "story_reports", type_="unique")

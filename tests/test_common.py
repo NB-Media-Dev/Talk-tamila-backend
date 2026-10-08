@@ -1,6 +1,5 @@
 from fastapi.testclient import TestClient
 
-
 def test_self_and_others_stories_flow(
     client: TestClient,
     creator_auth_headers: dict,
@@ -30,7 +29,6 @@ def test_self_and_others_stories_flow(
     assert feed_resp.status_code == 200
     groups = feed_resp.json()
     assert len(groups) > 0
-    # First group is creator's own story
     assert groups[0]["is_my_story"] is True
     assert any(slide["id"] == story_id for slide in groups[0]["slides"])
 
@@ -51,7 +49,6 @@ def test_self_and_others_stories_flow(
     assert view_resp.status_code == 200
     assert view_resp.json()["success"] is True
 
-    # 6b. Admin pauses story (playback telemetry)
     pause_resp = client.post(
         f"/api/v1/stories/{story_id}/pause",
         json={"action": "pause", "progress_ms": 2500, "slide_index": 0},
@@ -76,7 +73,6 @@ def test_self_and_others_stories_flow(
     assert unlike_resp.json()["liked_by_me"] is False
     client.post(f"/api/v1/stories/{story_id}/like", headers=admin_auth_headers)
 
-    # 8. Self-reply check: creator cannot comment/reply to their own story
     self_reply_resp = client.post(
         f"/api/v1/stories/{story_id}/reply",
         json={"text": "Self reply"},
@@ -85,7 +81,6 @@ def test_self_and_others_stories_flow(
     assert self_reply_resp.status_code == 400
     assert "Cannot reply to your own story" in self_reply_resp.json()["detail"]
 
-    # 8b. Admin (other user) comments on story
     comment_resp = client.post(
         f"/api/v1/stories/{story_id}/reply",
         json={"text": "Super post! Loved the visuals."},
@@ -103,7 +98,6 @@ def test_self_and_others_stories_flow(
     assert share_resp.json()["success"] is True
     assert share_resp.json()["shares_count"] >= 1
 
-    # 8c. Admin reports story
     report_resp = client.post(
         f"/api/v1/stories/{story_id}/report",
         json={"reason": "Inappropriate content", "details": "Testing report flow"},
@@ -112,7 +106,6 @@ def test_self_and_others_stories_flow(
     assert report_resp.status_code == 200
     assert report_resp.json()["success"] is True
 
-    # 8d. Admin mutes creator -> story disappears from Admin feed
     creator_id = created_story["user_id"]
     mute_resp = client.post(f"/api/v1/stories/mute/{creator_id}", headers=admin_auth_headers)
     assert mute_resp.status_code == 200
@@ -168,14 +161,12 @@ def test_self_and_others_stories_flow(
     my_after_del = client.get("/api/v1/stories/my", headers=creator_auth_headers).json()
     assert not any(s["id"] == story_id for s in my_after_del)
 
-    # 15. Verify story STILL EXISTS in database (Soft-deleted, not hard-deleted)
     from app.common.models.story import Story
     db_story = db_session.get(Story, story_id)
     assert db_story is not None
     assert db_story.is_deleted is True
     assert db_story.deleted_at is not None
     assert db_story.caption == story_payload["caption"]
-
 
 def test_unique_story_view_tracking_per_user(
     client: TestClient,
@@ -186,7 +177,6 @@ def test_unique_story_view_tracking_per_user(
 ):
     from app.common.models.story import StoryView
 
-    # Create Story X
     story_x_payload = {
         "media_url": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
         "media_type": "image",
@@ -197,7 +187,6 @@ def test_unique_story_view_tracking_per_user(
     assert resp_x.status_code == 201
     story_x_id = resp_x.json()["id"]
 
-    # Create Story Y
     story_y_payload = {
         "media_url": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
         "media_type": "image",
@@ -212,7 +201,6 @@ def test_unique_story_view_tracking_per_user(
     assert view_1.status_code == 200
     assert view_1.json()["views_count"] == 1
 
-    # Check DB rows for Story X
     db_views_x = db_session.query(StoryView).filter(StoryView.story_id == story_x_id).all()
     assert len(db_views_x) == 1
 
@@ -255,7 +243,7 @@ def test_unique_story_view_tracking_per_user(
     with pytest.raises(IntegrityError):
         duplicate_view = StoryView(
             story_id=story_x_id,
-            user_id=1,  # Admin already viewed Story X
+            user_id=1,
             user_name="admin",
             viewed_at=datetime.now(timezone.utc).replace(tzinfo=None),
         )

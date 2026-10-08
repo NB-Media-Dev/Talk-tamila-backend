@@ -45,10 +45,38 @@ class Story(Base):
     music_duration: Mapped[float | None] = mapped_column(Float, default=60.0, nullable=True)
     is_deleted: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
-    # Matches: ALTER TABLE stories ADD COLUMN username VARCHAR(100) NULL;
-    username: Mapped[str | None] = mapped_column(String(100), nullable=True)
 
-    owner: Mapped["User"] = relationship("User", back_populates="stories")
+    username: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    parent_story_id: Mapped[int | None] = mapped_column(
+        ForeignKey("stories.story_id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    original_story_id: Mapped[int | None] = mapped_column(
+        ForeignKey("stories.story_id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    original_owner_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.user_id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    status: Mapped[str] = mapped_column(String(20), default="active", nullable=False)
+
+    owner: Mapped["User"] = relationship("User", back_populates="stories", foreign_keys=[user_id])
+    parent_story: Mapped[Optional["Story"]] = relationship(
+        "Story", remote_side=[story_id], foreign_keys=[parent_story_id], post_update=True
+    )
+    original_story: Mapped[Optional["Story"]] = relationship(
+        "Story", remote_side=[story_id], foreign_keys=[original_story_id], post_update=True
+    )
+    original_owner: Mapped[Optional["User"]] = relationship(
+        "User", foreign_keys=[original_owner_id]
+    )
+    mentions: Mapped[list["StoryMention"]] = relationship(
+        "StoryMention", back_populates="story", cascade="all, delete-orphan", foreign_keys="StoryMention.story_id"
+    )
     views: Mapped[list["StoryView"]] = relationship("StoryView", back_populates="story", cascade="all, delete-orphan")
     likes: Mapped[list["StoryLike"]] = relationship("StoryLike", back_populates="story", cascade="all, delete-orphan")
     replies: Mapped[list["StoryReply"]] = relationship("StoryReply", back_populates="story", cascade="all, delete-orphan")
@@ -58,6 +86,14 @@ class Story(Base):
     @property
     def id(self) -> int:
         return self.story_id
+
+    @property
+    def owner_id(self) -> int:
+        return self.user_id
+
+    @owner_id.setter
+    def owner_id(self, value: int) -> None:
+        self.user_id = value
 
     @property
     def author_id(self) -> int:
@@ -78,6 +114,31 @@ class Story(Base):
     @property
     def has_active_story(self) -> bool:
         return not self.is_deleted
+
+
+class StoryMention(Base):
+    __tablename__ = "story_mentions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    story_id: Mapped[int] = mapped_column(
+        ForeignKey("stories.story_id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    mentioned_user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.user_id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    created_by_user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.user_id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    owner_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.user_id", ondelete="CASCADE"), nullable=True, index=True
+    )
+    x: Mapped[float | None] = mapped_column(Float, nullable=True)
+    y: Mapped[float | None] = mapped_column(Float, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+    story: Mapped["Story"] = relationship("Story", back_populates="mentions", foreign_keys=[story_id])
+    mentioned_user: Mapped["User"] = relationship("User", foreign_keys=[mentioned_user_id])
+    created_by_user: Mapped["User"] = relationship("User", foreign_keys=[created_by_user_id])
 
 
 class StoryView(Base):

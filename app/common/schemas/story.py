@@ -4,6 +4,26 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from app.common.enums import StoryAudienceEnum
 
 
+class StoryMentionItem(BaseModel):
+    id: Optional[int] = None
+    story_id: Optional[int] = None
+    mentioned_user_id: int
+    created_by_user_id: Optional[int] = None
+    username: Optional[str] = None
+    full_name: Optional[str] = None
+    avatar_url: Optional[str] = None
+    x: Optional[float] = None
+    y: Optional[float] = None
+    model_config = ConfigDict(from_attributes=True)
+
+
+class StoryMentionInput(BaseModel):
+    user_id: Optional[int] = None
+    username: Optional[str] = None
+    x: Optional[float] = None
+    y: Optional[float] = None
+
+
 class StorySlideResponse(BaseModel):
     id: int
     story_id: Optional[int] = None
@@ -13,7 +33,7 @@ class StorySlideResponse(BaseModel):
     caption: Optional[str] = None
     content: Optional[str] = None
     audience: Optional[str] = "PUBLIC"
-    duration: int = 5000
+    duration: int = 30000
     created_at: Optional[str] = None
     expires_at: Optional[str] = None
     liked: bool = False
@@ -24,6 +44,14 @@ class StorySlideResponse(BaseModel):
     musicTrack: Optional[str] = None
     music_url: Optional[str] = None
     replyPlaceholder: str = "Reply..."
+    parent_story_id: Optional[int] = None
+    original_story_id: Optional[int] = None
+    original_owner_id: Optional[int] = None
+    original_username: Optional[str] = None
+    is_reshare: bool = False
+    can_reshare: bool = False
+    mentions: List[StoryMentionItem] = []
+    status: str = "active"
     model_config = ConfigDict(from_attributes=True)
 
 
@@ -36,6 +64,7 @@ class StoryUserResponse(BaseModel):
     full_name: Optional[str] = None
     role: str = "influencer"
     verified: bool = True
+    is_active: bool = True
     model_config = ConfigDict(from_attributes=True)
 
 
@@ -69,6 +98,15 @@ class StoryItemResponse(BaseModel):
     liked_by_me: bool = False
     username: Optional[str] = None
     user: Optional[StoryUserResponse] = None
+    parent_story_id: Optional[int] = None
+    original_story_id: Optional[int] = None
+    original_owner_id: Optional[int] = None
+    original_username: Optional[str] = None
+    original_user: Optional[StoryUserResponse] = None
+    is_reshare: bool = False
+    can_reshare: bool = False
+    mentions: List[StoryMentionItem] = []
+    status: str = "active"
     model_config = ConfigDict(from_attributes=True)
 
 
@@ -181,8 +219,8 @@ class StoryMuteResponse(BaseModel):
 
 
 class StoryCreateRequest(BaseModel):
-    content: Optional[str] = Field(default=None, max_length=2200, description="Story content / text overlay")
-    caption: Optional[str] = Field(default=None, max_length=2200, description="Story caption (alias for content)")
+    content: Optional[str] = Field(default=None, max_length=1000, description="Story content / text overlay")
+    caption: Optional[str] = Field(default=None, max_length=1000, description="Story caption (alias for content)")
     audience: StoryAudienceEnum = Field(default=StoryAudienceEnum.PUBLIC, description="Audience: PUBLIC, FOLLOWERS, CLOSE_FRIENDS")
     media_url: Optional[str] = Field(default=None, description="Media URL or gradient placeholder")
     media_type: Optional[str] = Field(default="image", description="Media type: image, video, text")
@@ -194,6 +232,7 @@ class StoryCreateRequest(BaseModel):
     music_thumbnail: Optional[str] = None
     music_duration: Optional[float] = 60.0
     music_start_time: Optional[float] = 0.0
+    mentions: Optional[List[StoryMentionInput]] = None
 
     @model_validator(mode="after")
     def sync_content_caption(self):
@@ -209,12 +248,35 @@ class StoryJsonCreateRequest(StoryCreateRequest):
 
 
 class StoryTextCreateRequest(BaseModel):
-    caption: str = Field(..., min_length=1, max_length=2200)
-    content: Optional[str] = Field(default=None, max_length=2200)
+    caption: str = Field(..., min_length=1, max_length=300)
+    content: Optional[str] = Field(default=None, max_length=300)
     theme: Optional[str] = "insta"
     media_url: Optional[str] = None
     audience: StoryAudienceEnum = Field(default=StoryAudienceEnum.PUBLIC, description="Audience: PUBLIC, FOLLOWERS, CLOSE_FRIENDS")
     duration_hours: Optional[int] = Field(default=24, ge=1, le=72)
+    music_id: Optional[int] = None
+    music_title: Optional[str] = None
+    music_artist: Optional[str] = None
+    music_url: Optional[str] = None
+    music_thumbnail: Optional[str] = None
+    music_duration: Optional[float] = 60.0
+    music_start_time: Optional[float] = 0.0
+    mentions: Optional[List[StoryMentionInput]] = None
+
+    @model_validator(mode="after")
+    def sync_content_caption(self):
+        if self.caption and not self.content:
+            self.content = self.caption
+        elif self.content and not self.caption:
+            self.caption = self.content
+        return self
+
+
+class StoryReshareRequest(BaseModel):
+    caption: Optional[str] = Field(default=None, max_length=1000)
+    content: Optional[str] = Field(default=None, max_length=1000)
+    audience: StoryAudienceEnum = Field(default=StoryAudienceEnum.PUBLIC)
+    mentions: Optional[List[StoryMentionInput]] = None
     music_id: Optional[int] = None
     music_title: Optional[str] = None
     music_artist: Optional[str] = None
@@ -232,9 +294,27 @@ class StoryTextCreateRequest(BaseModel):
         return self
 
 
+class MentionUserSearchItem(BaseModel):
+    id: int
+    user_id: int
+    username: str
+    full_name: Optional[str] = None
+    avatar_url: Optional[str] = None
+    role: str = "influencer"
+    is_following: bool = False
+    is_blocked: bool = False
+    is_already_mentioned: bool = False
+
+
+class StoryAddMentionRequest(BaseModel):
+    mentioned_user_id: int
+    x: Optional[float] = Field(default=0.5, ge=0.0, le=1.0, description="Horizontal position 0-1")
+    y: Optional[float] = Field(default=0.5, ge=0.0, le=1.0, description="Vertical position 0-1")
+
+
 class StoryPatchRequest(BaseModel):
-    caption: Optional[str] = Field(default=None, max_length=2200)
-    content: Optional[str] = Field(default=None, max_length=2200)
+    caption: Optional[str] = Field(default=None, max_length=1000)
+    content: Optional[str] = Field(default=None, max_length=1000)
     audience: Optional[StoryAudienceEnum] = None
 
 

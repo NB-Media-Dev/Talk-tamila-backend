@@ -3,8 +3,19 @@ import logging
 from typing import Any, Dict, Optional
 from urllib.parse import urlparse
 
-from pywebpush import WebPushException, webpush
-from py_vapid import Vapid
+try:
+    from pywebpush import WebPushException, webpush
+except ImportError:
+    webpush = None
+
+    class WebPushException(Exception):
+        pass
+
+try:
+    from py_vapid import Vapid
+except ImportError:
+    Vapid = None
+
 from sqlalchemy import delete, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -29,10 +40,8 @@ _ALLOWED_SUFFIXES = (".push.apple.com", ".notify.windows.com", ".push.services.m
 
 _BODY_LIMIT = 140
 
-
 def is_configured() -> bool:
-    return bool(settings.VAPID_PUBLIC_KEY and settings.VAPID_PRIVATE_KEY)
-
+    return bool(webpush is not None and Vapid is not None and settings.VAPID_PUBLIC_KEY and settings.VAPID_PRIVATE_KEY)
 
 def is_allowed_endpoint(endpoint: str) -> bool:
     try:
@@ -44,14 +53,12 @@ def is_allowed_endpoint(endpoint: str) -> bool:
         return False
     return host in _ALLOWED_HOSTS or host.endswith(_ALLOWED_SUFFIXES)
 
-
 def _vapid_subject() -> str:
     if settings.VAPID_SUBJECT:
         return settings.VAPID_SUBJECT
     if settings.SMTP_FROM_EMAIL:
         return f"mailto:{settings.SMTP_FROM_EMAIL}"
     return "mailto:admin@talktamila.com"
-
 
 def _messages_url(role: Optional[str], sender_id: int) -> str:
     role = str(getattr(role, "value", role) or "").lower()
@@ -63,7 +70,6 @@ def _messages_url(role: Optional[str], sender_id: int) -> str:
         base = "/admin/messages"
     return f"{base}?user={sender_id}"
 
-
 def _preview(kind: str, body: str) -> str:
     text = " ".join((body or "").split())
     if kind == MESSAGE_KIND_STORY_REPLY:
@@ -74,9 +80,7 @@ def _preview(kind: str, body: str) -> str:
         return text[: _BODY_LIMIT - 1] + "…"
     return text
 
-
 class PushService:
-    # ---------- devices ----------
     @staticmethod
     def subscribe(db: Session, user: User, endpoint: str, p256dh: str, auth: str) -> None:
         existing = db.execute(
@@ -108,7 +112,6 @@ class PushService:
         db.commit()
         return bool(result.rowcount)
 
-    # ---------- sending ----------
     @staticmethod
     def notify_new_message(message_id: int, exclude_endpoint: Optional[str] = None) -> None:
         if not is_configured():
@@ -137,7 +140,6 @@ class PushService:
             logger.warning("Push skipped for message %s: sender/receiver missing or receiver inactive", message_id)
             return
 
-        # Blocked, muted, or still a message request -> stay quiet.
         if MessageService.is_blocked_between(db, sender.user_id, receiver.user_id):
             logger.warning("Push skipped for message %s: users are blocked", message_id)
             return
@@ -184,7 +186,7 @@ class PushService:
             "title": sender.full_name or f"@{sender.username}",
             "body": _preview(msg.kind, msg.body),
             "url": _messages_url(receiver.role, sender.user_id),
-            "tag": f"dm-{sender.user_id}",  # newer messages from one person replace the old pop-up
+            "tag": f"dm-{sender.user_id}",
             "sender_id": sender.user_id,
             "message_id": msg.id,
         }
@@ -202,7 +204,7 @@ class PushService:
                     },
                     data=data,
                     vapid_private_key=vapid,
-                    vapid_claims={"sub": _vapid_subject()},  # fresh dict each time: the library edits it
+                    vapid_claims={"sub": _vapid_subject()},
                     ttl=24 * 60 * 60,
                     timeout=10,
                 )
@@ -210,7 +212,7 @@ class PushService:
             except WebPushException as exc:
                 status_code = getattr(getattr(exc, "response", None), "status_code", None)
                 if status_code in (404, 410):
-                    dead_ids.append(sub.id)  # the person removed the permission - forget this device
+                    dead_ids.append(sub.id)
                 else:
                     logger.warning("Push to subscription %s failed: %s", sub.id, exc)
             except Exception:

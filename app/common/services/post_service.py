@@ -37,16 +37,8 @@ logger = logging.getLogger("talktamila.posts")
 # ---------------------------------------------------------------------------
 POST_CREATOR_ROLES = {"admin"}
 
-POST_TYPES = {"text", "image", "video", "gif", "poll"}
-
-MAX_CONTENT_LENGTH = 5000
-MAX_IMAGE_BYTES = 5 * 1024 * 1024
-MAX_VIDEO_BYTES = 25 * 1024 * 1024
-POLL_MIN_OPTIONS = 2
-POLL_MAX_OPTIONS = 5
-POLL_OPTION_MAX_LENGTH = 80
-
-ALLOWED_GIF_HOST_SUFFIXES = ("giphy.com", "tenor.com")
+def _utc_now_naive() -> datetime:
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 # Scheduling window: at least 1 minute ahead, at most 365 days ahead.
 SCHEDULE_MIN_LEAD = timedelta(minutes=1)
@@ -60,8 +52,12 @@ VIDEO_MIMES = {"video/mp4", "video/webm", "video/quicktime"}
 MSG_POST_NOT_FOUND = "Post not found."
 
 
-def max_bytes_for(post_type: str) -> int:
-    return MAX_VIDEO_BYTES if post_type == "video" else MAX_IMAGE_BYTES
+def _format_iso(dt: Optional[datetime]) -> str:
+    if not dt:
+        return datetime.now(timezone.utc).isoformat()
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc).isoformat()
+    return dt.isoformat()
 
 
 def sniff_mime(data: bytes) -> Optional[str]:
@@ -87,8 +83,72 @@ def _iso(dt: Optional[datetime]) -> Optional[str]:
     return dt.replace(tzinfo=None).isoformat(timespec="seconds") + "Z"
 
 
-def _bad(detail: str) -> HTTPException:
-    return HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=detail)
+def _format_post_response(
+    post: Post,
+    is_liked: bool = False,
+    is_saved: bool = False,
+    extra_analytics: Optional[Dict[str, Any]] = None,
+) -> PostItemResponse:
+    owner = post.owner
+    author_info = PostAuthorInfo(
+        user_id=post.user_id,
+        username=post.username or (owner.username if owner else "admin"),
+        first_name=owner.first_name if owner else "Talk Tamila",
+        last_name=owner.last_name if owner else "Admin",
+        full_name=owner.full_name if owner else "Talk Tamila Official",
+        role=owner.role if owner else "admin",
+        avatar_url=owner.avatar_url if owner else "/Images/avatar4.png",
+        location=owner.location if owner else post.location or "Tamil Nadu, India",
+    )
+
+    platforms = _parse_json_list(post.platforms)
+    tags = _parse_json_list(post.tags)
+    poll_data = _parse_json_dict(post.poll_data)
+
+    # Generated or stored analytics for rich UI display
+    analytics = extra_analytics or {
+        "views": f"{post.views_count:,}" if post.views_count > 0 else "1.2K",
+        "likes": f"{post.likes_count:,}" if post.likes_count > 0 else "0",
+        "comments": f"{post.comments_count:,}" if post.comments_count > 0 else "0",
+        "shares": f"{post.shares_count:,}" if post.shares_count > 0 else "0",
+        "saves": f"{post.saves_count:,}" if post.saves_count > 0 else "0",
+        "aiPerformanceScore": "94",
+        "aiPerformanceLabel": "High Performing",
+        "trendingProb": "High",
+    }
+
+    return PostItemResponse(
+        id=post.post_id,
+        post_id=post.post_id,
+        user_id=post.user_id,
+        author_id=post.user_id,
+        username=post.username or (owner.username if owner else "admin"),
+        title=post.title,
+        caption=post.caption,
+        content=post.caption,
+        media_type=post.media_type or "image",
+        media_url=post.media_url,
+        thumbnail_url=post.thumbnail_url,
+        aspect_ratio=post.aspect_ratio,
+        platforms=platforms if platforms else ["Talk Tamila"],
+        tags=tags,
+        poll_data=poll_data,
+        audience=post.audience or "PUBLIC",
+        status=post.status or "published",
+        location=post.location or (owner.location if owner else None),
+        scheduled_at=_format_iso(post.scheduled_at) if post.scheduled_at else None,
+        views_count=post.views_count,
+        likes_count=post.likes_count,
+        comments_count=post.comments_count,
+        shares_count=post.shares_count,
+        saves_count=post.saves_count,
+        is_liked=is_liked,
+        is_saved=is_saved,
+        created_at=_format_iso(post.created_at),
+        created_at_human=_format_human_time(post.created_at),
+        author=author_info,
+        analytics=analytics,
+    )
 
 
 def to_utc_naive(value: datetime) -> datetime:
@@ -110,17 +170,20 @@ def validate_schedule_window(when_utc: datetime) -> datetime:
 
 
 class PostService:
-    # ------------------------------------------------------------------ rules
-    @staticmethod
-    def can_create(user: User) -> bool:
-        return user.role in POST_CREATOR_ROLES
 
     @staticmethod
-    def assert_can_create(user: User) -> None:
-        if not PostService.can_create(user):
+    def create_admin_post(
+        payload: PostCreateRequest,
+        current_admin: User,
+        db: Session,
+    ) -> PostItemResponse:
+        """Create a public post uploaded by an Admin user.
+        Ensures the post is published publicly under the Admin's ID and profile.
+        """
+        if current_admin.role != "admin" and not current_admin.is_admin:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail="Posting is limited to admins right now.",
+                detail="Only admin accounts are permitted to publish admin posts.",
             )
 
     @staticmethod
@@ -246,7 +309,6 @@ class PostService:
 
         db.commit()
         db.refresh(post)
-        return PostService._build_feed(db, [post], user, has_more=False)
 
     # ------------------------------------------------------------------- read
     @staticmethod
@@ -325,26 +387,65 @@ class PostService:
                 .group_by(PostPollVote.option_id)
             ).all()
         )
-        mine = dict(
-            db.execute(
-                select(PostPollVote.post_id, PostPollVote.option_id).where(
-                    PostPollVote.post_id.in_(post_ids), PostPollVote.user_id == viewer_id
-                )
-            ).all()
-        )
-        return counts, mine
 
-    @staticmethod
-    def _poll_out(post: Post, counts: Dict[int, int], my_option: Optional[int]) -> PollOut:
-        options = [
-            PollOptionOut(option_id=o.option_id, text=o.text, votes=int(counts.get(o.option_id, 0)))
-            for o in post.poll_options
+        if media_type:
+            query = query.filter(Post.media_type == media_type)
+
+        if tag:
+            clean_tag = tag.lstrip("#")
+            query = query.filter(Post.tags.like(f"%{clean_tag}%"))
+
+        if user_id:
+            query = query.filter(Post.user_id == user_id)
+
+        if search:
+            search_term = f"%{search.strip()}%"
+            query = query.filter(
+                or_(
+                    Post.title.ilike(search_term),
+                    Post.caption.ilike(search_term),
+                    Post.username.ilike(search_term),
+                )
+            )
+
+        total = query.count()
+        posts = query.order_by(desc(Post.created_at)).offset(offset).limit(limit).all()
+
+        liked_post_ids = set()
+        saved_post_ids = set()
+        if current_user:
+            post_ids = [p.post_id for p in posts]
+            if post_ids:
+                likes = (
+                    db.query(PostLike.post_id)
+                    .filter(
+                        PostLike.post_id.in_(post_ids),
+                        PostLike.user_id == current_user.user_id,
+                    )
+                    .all()
+                )
+                liked_post_ids = {l[0] for l in likes}
+
+                saves = (
+                    db.query(PostSave.post_id)
+                    .filter(
+                        PostSave.post_id.in_(post_ids),
+                        PostSave.user_id == current_user.user_id,
+                    )
+                    .all()
+                )
+                saved_post_ids = {s[0] for s in saves}
+
+        items = [
+            _format_post_response(
+                p,
+                is_liked=(p.post_id in liked_post_ids),
+                is_saved=(p.post_id in saved_post_ids),
+            )
+            for p in posts
         ]
-        return PollOut(
-            options=options,
-            total_votes=sum(o.votes for o in options),
-            my_vote_option_id=my_option,
-        )
+
+        return PostFeedResponse(items=items, total=total)
 
     @staticmethod
     def _load_authors(db: Session, author_ids: List[int]) -> Dict[int, PostAuthor]:
@@ -523,7 +624,8 @@ class PostService:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=MSG_POST_NOT_FOUND)
         if post.user_id != user.user_id and not user.is_admin:
             raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN, detail="You can only delete your own posts."
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You do not have permission to modify this post.",
             )
         was_published = post.status == STATUS_PUBLISHED
         owner_id = post.user_id
@@ -532,9 +634,9 @@ class PostService:
         if was_published:
             PostService._adjust_posts_count(db, owner_id, -1)
         db.commit()
-        return {"success": True, "post_id": post_id}
+        db.refresh(post)
+        return _format_post_response(post)
 
-    # ------------------------------------------------------------------- vote
     @staticmethod
     def vote(db: Session, user: User, post_id: int, option_id: int) -> PollOut:
         post = db.get(Post, post_id)
@@ -566,7 +668,16 @@ class PostService:
         counts, mine = PostService._poll_data(db, [post_id], user.user_id)
         return PostService._poll_out(post, counts, mine.get(post_id))
 
-    # ------------------------------------------------------------------ media
+        post.is_deleted = True
+        post.deleted_at = _utc_now_naive()
+
+        # Decrement owner profile posts count
+        if post.owner and post.owner.profile and post.owner.profile.posts_count > 0:
+            post.owner.profile.posts_count -= 1
+
+        db.commit()
+        return {"success": True, "message": "Post removed successfully"}
+
     @staticmethod
     def media_info(
         db: Session, post_id: int, viewer: Optional[User] = None

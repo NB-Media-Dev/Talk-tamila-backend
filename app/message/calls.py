@@ -65,7 +65,7 @@ class CallSession:
     call_id: str
     caller_id: int
     callee_id: int
-    media: str  # "audio" | "video"
+    media: str 
     caller_ws: WebSocket
     callee_ws: Optional[WebSocket] = None
     created_at: float = field(default_factory=time.monotonic)
@@ -81,7 +81,7 @@ class CallManager:
         self.calls: Dict[str, CallSession] = {}
         self.user_call: Dict[int, str] = {}
         self._next_id = 0
-        # garbage-collected mid-flight, without ever blocking the signaling path.
+      
         self._background: Set["asyncio.Task[None]"] = set()
 
     def _new_call_id(self) -> str:
@@ -94,12 +94,12 @@ class CallManager:
         try:
             await ws.send_json(payload)
         except Exception:
-            pass
+            pass  
 
     async def _send_user(self, user_id: int, payload: dict) -> None:
         await self._send(self.connections.get(user_id), payload)
 
-    # ---------- connection lifecycle ----------
+
     async def register(self, user_id: int, ws: WebSocket) -> None:
         old = self.connections.get(user_id)
         if old is not None and old is not ws:
@@ -121,7 +121,7 @@ class CallManager:
         if session:
             await self._end(session, reason="disconnected")
 
-    # ---------- incoming signaling messages ----------
+
     async def handle_message(self, me: CallUser, ws: WebSocket, message: dict) -> None:
         mtype = message.get("type")
         if mtype == "invite":
@@ -215,7 +215,7 @@ class CallManager:
             return
         await self._end(session, reason=reason)
 
-    # ---------- ending a call ----------
+
     async def _end(self, session: CallSession, reason: str) -> None:
         if session.ended:
             return
@@ -247,7 +247,7 @@ class CallManager:
         await self._send_user(session.callee_id, payload)
         await self._log_call_async(session.caller_id, session.callee_id, session.media, outcome, seconds)
 
-    # ---------- DB logging, kept off the signaling hot path ----------
+   
     async def _log_call_async(
         self, caller_id: int, callee_id: int, media: str, outcome: str, seconds: int
     ) -> None:

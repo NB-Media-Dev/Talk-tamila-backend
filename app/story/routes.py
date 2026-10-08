@@ -32,10 +32,13 @@ from app.common.schemas.story import (
     StoryReplyRequest,
     StoryReplyResponse,
     StoryReportRequest,
+    StoryReshareRequest,
     StoryShareRequest,
     StoryShareResponse,
     StoryStatsResponse,
     StoryTextCreateRequest,
+    MentionUserSearchItem,
+    StoryAddMentionRequest,
 )
 from app.common.schemas.music import MusicTrackResponse
 from app.common.services.music_service import MusicService
@@ -328,6 +331,39 @@ def share_story(
     return StoryService.share_story(story_id, platform, current_user, db, target_user_id=target_user_id)
 
 
+@router.post("/{story_id:int}/reshare", response_model=StoryItemResponse, status_code=status.HTTP_201_CREATED)
+def reshare_story(
+    story_id: int,
+    payload: Optional[StoryReshareRequest] = None,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> StoryItemResponse:
+    return StoryService.re_share_story(story_id, payload, current_user, db)
+
+
+@router.get("/mentions/search", response_model=List[MentionUserSearchItem])
+def search_mention_users(
+    q: str = Query(default=""),
+    limit: int = Query(default=20, ge=1, le=50),
+    story_id: Optional[int] = Query(default=None),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> List[MentionUserSearchItem]:
+    return StoryService.search_mention_users(q, current_user, db, limit=limit, story_id=story_id)
+
+
+@router.post("/{story_id:int}/mentions")
+def add_mention_to_story(
+    story_id: int,
+    payload: StoryAddMentionRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    return StoryService.add_mention_to_story(
+        story_id, payload.mentioned_user_id, payload.x, payload.y, current_user, db
+    )
+
+
 @router.post("/{story_id:int}/save")
 def save_story(
     story_id: int,
@@ -357,6 +393,7 @@ def report_story(
 
 
 @router.post("/mute/{user_id:int}", response_model=StoryMuteResponse)
+@router.post("/users/{user_id:int}/mute", response_model=StoryMuteResponse)
 def mute_creator(
     user_id: int,
     current_user: User = Depends(get_current_user),

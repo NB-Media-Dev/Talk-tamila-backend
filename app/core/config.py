@@ -6,7 +6,6 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 _ENV_FILE = Path(__file__).resolve().parent.parent.parent / ".env"
 
-
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=str(_ENV_FILE),
@@ -42,9 +41,6 @@ class Settings(BaseSettings):
     # Brevo (transactional email) - used for OTP emails
     BREVO_API_KEY: str = ""
 
-    # Web Push (Instagram-style message notifications).
-    # Create the two keys once with:  python scripts/generate_vapid_keys.py
-    # Leave them empty and notifications are simply switched off.
     VAPID_PUBLIC_KEY: str = ""
     VAPID_PRIVATE_KEY: str = ""
     VAPID_SUBJECT: str = ""
@@ -62,6 +58,7 @@ class Settings(BaseSettings):
     BACKEND_CORS_ORIGINS: Union[str, List[str]] = [
         "http://localhost:3000",
         "http://127.0.0.1:3000",
+        "http://192.168.0.72:3000",
         "http://192.168.0.45:3000",
         "http://localhost:5173",
         "https://talktamila-adminpanel-s8pg.vercel.app",

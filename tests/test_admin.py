@@ -1,6 +1,5 @@
 from fastapi.testclient import TestClient
 
-
 def test_admin_endpoints(client: TestClient, admin_auth_headers: dict, creator_auth_headers: dict):
     # 1. Admin overview & stats
     resp = client.get("/api/v1/admin/stories/stats", headers=admin_auth_headers)
@@ -14,7 +13,6 @@ def test_admin_endpoints(client: TestClient, admin_auth_headers: dict, creator_a
 
 
 def test_admin_story_management(client: TestClient, admin_auth_headers: dict, creator_auth_headers: dict):
-    # 1. Creator creates a story
     story_res = client.post(
         "/api/v1/stories",
         json={"content": "Story for Admin moderation", "audience": "PUBLIC"},
@@ -56,7 +54,6 @@ def test_admin_story_management(client: TestClient, admin_auth_headers: dict, cr
 
     my_stats = client.get("/api/v1/admin/stories/my/stats", headers=admin_auth_headers)
     assert my_stats.status_code == 200
-
 
 def test_admin_creates_public_story(client: TestClient, admin_auth_headers: dict):
     # 1. Admin creates story via /api/v1/admin/stories

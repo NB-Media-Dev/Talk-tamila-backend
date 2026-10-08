@@ -23,7 +23,7 @@ class ReactionRequest(BaseModel):
         v = v.strip()
         if not v:
             raise ValueError("Emoji cannot be empty")
-        # Keeps reactions from being used as a second text channel.
+       
         if any(c.isascii() and c.isalpha() for c in v):
             raise ValueError("Reaction must be an emoji")
         return v

@@ -16,20 +16,16 @@ from app.common.schemas.auth import RegisterRequest
 from app.core.config import settings
 from app.core.security import create_access_token, get_password_hash, verify_password
 
-
 logger = logging.getLogger("talktamila.auth")
 
 MAX_OTP_ATTEMPTS = 5
 
-
 def _hash_otp(otp: str) -> str:
     return hmac.new(settings.SECRET_KEY.encode(), otp.encode(), hashlib.sha256).hexdigest()
-
 
 def _looks_like_mobile(identifier: str) -> bool:
     digits = identifier.replace("+", "").replace(" ", "")
     return digits.isdigit() and 7 <= len(digits) <= 15
-
 
 class AuthService:
     @staticmethod
@@ -102,7 +98,7 @@ class AuthService:
 
     @staticmethod
     def send_change_password_otp(db: Session, user: User) -> str:
-        # Throttle: the code's issue time is expiry minus 10 minutes.
+        """Email a 6-digit code to the user's registered address. Returns the masked address."""
         expires = user.reset_otp_expires
         if expires:
             if expires.tzinfo is None:
@@ -145,7 +141,7 @@ class AuthService:
                 status_code=400, detail="New password must be different from the current one."
             )
         user.password = get_password_hash(new_password)
-        AuthService._clear_otp(db, user)  # also commits the new password
+        AuthService._clear_otp(db, user)
 
     @staticmethod
     def _clear_otp(db: Session, user: User) -> None:

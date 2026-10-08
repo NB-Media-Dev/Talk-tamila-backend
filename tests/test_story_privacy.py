@@ -3,27 +3,20 @@ from fastapi.testclient import TestClient
 from app.core.security import create_access_token
 from app.common.models.social import Follow, CloseFriend
 
-
 @pytest.fixture
 def user1_headers():
-    # user_id 2 (creator)
     token = create_access_token(2)
     return {"Authorization": f"Bearer {token}"}
 
-
 @pytest.fixture
 def user2_headers():
-    # user_id 3 (influencer)
     token = create_access_token(3)
     return {"Authorization": f"Bearer {token}"}
 
-
 @pytest.fixture
 def user3_headers():
-    # user_id 4 (freelancer)
     token = create_access_token(4)
     return {"Authorization": f"Bearer {token}"}
-
 
 @pytest.fixture(autouse=True)
 def clean_social_relations(db_session):
@@ -34,7 +27,6 @@ def clean_social_relations(db_session):
     db_session.query(Follow).delete()
     db_session.query(CloseFriend).delete()
     db_session.commit()
-
 
 def test_create_story_privacy_validation(client: TestClient, user1_headers: dict):
     # 1. Valid PUBLIC
@@ -50,7 +42,6 @@ def test_create_story_privacy_validation(client: TestClient, user1_headers: dict
     assert data["author_id"] == 2
     assert data["user_id"] == 2
 
-    # 2. Valid FOLLOWERS
     resp = client.post(
         "/api/v1/stories",
         json={"content": "Followers Story", "audience": "FOLLOWERS"},
@@ -59,7 +50,6 @@ def test_create_story_privacy_validation(client: TestClient, user1_headers: dict
     assert resp.status_code == 201
     assert resp.json()["audience"] == "FOLLOWERS"
 
-    # 3. Valid CLOSE_FRIENDS
     resp = client.post(
         "/api/v1/stories",
         json={"content": "Close Friends Story", "audience": "CLOSE_FRIENDS"},
@@ -68,14 +58,12 @@ def test_create_story_privacy_validation(client: TestClient, user1_headers: dict
     assert resp.status_code == 201
     assert resp.json()["audience"] == "CLOSE_FRIENDS"
 
-    # 4. Invalid Audience -> 422
     resp = client.post(
         "/api/v1/stories",
         json={"content": "Invalid Story", "audience": "EVERYONE_ELSE"},
         headers=user1_headers,
     )
     assert resp.status_code == 422
-
 
 def test_author_id_cannot_be_manipulated(client: TestClient, user1_headers: dict):
     resp = client.post(
@@ -90,10 +78,8 @@ def test_author_id_cannot_be_manipulated(client: TestClient, user1_headers: dict
     )
     assert resp.status_code == 201
     data = resp.json()
-    # Stored strictly as user 2 (authenticated user)
     assert data["author_id"] == 2
     assert data["user_id"] == 2
-
 
 def test_public_story_visibility(client: TestClient, user1_headers: dict, user2_headers: dict):
     resp = client.post(
@@ -114,7 +100,6 @@ def test_public_story_visibility(client: TestClient, user1_headers: dict, user2_
     detail_resp = client.get(f"/api/v1/stories/{story_id}", headers=user2_headers)
     assert detail_resp.status_code == 200
     assert detail_resp.json()["id"] == story_id
-
 
 def test_author_always_sees_own_stories(client: TestClient, user1_headers: dict):
     # Create one of each audience type
@@ -143,11 +128,9 @@ def test_author_always_sees_own_stories(client: TestClient, user1_headers: dict)
     for story_id in ids:
         assert story_id in feed_ids
 
-    # Author gets each by ID
     for story_id in ids:
         detail = client.get(f"/api/v1/stories/{story_id}", headers=user1_headers)
         assert detail.status_code == 200
-
 
 def test_followers_story_visibility(
     client: TestClient,
@@ -191,7 +174,6 @@ def test_followers_story_visibility(
     # User 3 (still not following) cannot see it
     feed_resp3 = client.get("/api/v1/stories/feed", headers=user3_headers)
     assert story_id not in [s["id"] for s in feed_resp3.json()]
-
 
 def test_close_friends_story_visibility(
     client: TestClient,
@@ -242,7 +224,6 @@ def test_close_friends_story_visibility(
     feed_resp2_removed = client.get("/api/v1/stories/feed", headers=user2_headers)
     assert story_id not in [s["id"] for s in feed_resp2_removed.json()]
 
-
 def test_feed_pagination(client: TestClient, user1_headers: dict):
     # Create multiple public stories
     for i in range(5):
@@ -264,17 +245,14 @@ def test_feed_pagination(client: TestClient, user1_headers: dict):
     items2 = page2.json()
     assert len(items2) == 2
 
-    # Ensure no duplicate items across pages
     ids_page1 = {item["id"] for item in items1}
     ids_page2 = {item["id"] for item in items2}
     assert ids_page1.isdisjoint(ids_page2)
-
 
 @pytest.fixture
 def admin_headers():
     token = create_access_token(1)
     return {"Authorization": f"Bearer {token}"}
-
 
 def test_change_audience_dynamically_without_affecting_other_stories(
     client: TestClient,
@@ -308,7 +286,6 @@ def test_change_audience_dynamically_without_affecting_other_stories(
     assert client.get(f"/api/v1/stories/{story_a_id}", headers=user2_headers).status_code == 200
     assert client.get(f"/api/v1/stories/{story_b_id}", headers=user2_headers).status_code == 403
 
-    # User 1 changes Story A from PUBLIC to FOLLOWERS
     patch_a = client.patch(
         f"/api/v1/stories/{story_a_id}",
         json={"audience": "FOLLOWERS"},
@@ -327,7 +304,6 @@ def test_change_audience_dynamically_without_affecting_other_stories(
     detail_b = client.get(f"/api/v1/stories/{story_b_id}", headers=user1_headers).json()
     assert detail_b["audience"] == "FOLLOWERS"
 
-    # User 1 changes Story B to PUBLIC
     patch_b = client.patch(
         f"/api/v1/stories/{story_b_id}",
         json={"audience": "PUBLIC"},
@@ -343,7 +319,6 @@ def test_change_audience_dynamically_without_affecting_other_stories(
     assert client.get(f"/api/v1/stories/{story_b_id}", headers=user2_headers).status_code == 200
     assert client.get(f"/api/v1/stories/{story_a_id}", headers=user2_headers).status_code == 403
 
-    # User 1 changes Story A to CLOSE_FRIENDS
     patch_a_cf = client.patch(
         f"/api/v1/stories/{story_a_id}",
         json={"audience": "CLOSE_FRIENDS"},
@@ -362,7 +337,6 @@ def test_change_audience_dynamically_without_affecting_other_stories(
 
     # Now User 2 can see Story A
     assert client.get(f"/api/v1/stories/{story_a_id}", headers=user2_headers).status_code == 200
-
 
 def test_active_groups_audience_filtering(
     client: TestClient,
@@ -419,7 +393,6 @@ def test_active_groups_audience_filtering(
     assert s2 in slide_ids_self
     assert s3 in slide_ids_self
 
-
 def test_get_user_stories_audience_filtering(
     client: TestClient,
     user1_headers: dict,
@@ -454,7 +427,6 @@ def test_get_user_stories_audience_filtering(
     assert s2 in ids3
     assert s3 in ids3
 
-
 def test_admin_can_view_all_audiences(
     client: TestClient,
     user1_headers: dict,
@@ -483,7 +455,6 @@ def test_admin_can_view_all_audiences(
     assert s1 in u_ids
     assert s2 in u_ids
     assert s3 in u_ids
-
 
 def test_unauthenticated_user_access(
     client: TestClient,

@@ -7,7 +7,6 @@ from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
-
 def send_otp_email(to_email: str, otp: str) -> None:
     if not settings.BREVO_API_KEY:
         raise RuntimeError("BREVO_API_KEY is not set")
@@ -23,7 +22,6 @@ def send_otp_email(to_email: str, otp: str) -> None:
 
     message = sib_api_v3_sdk.SendSmtpEmail(
         to=[{"email": to_email}],
-        # Must be a sender/domain you have verified in Brevo.
         sender={"email": settings.SMTP_FROM_EMAIL, "name": settings.SMTP_FROM_NAME},
         subject="Your Talk Tamila password reset code",
         text_content=(

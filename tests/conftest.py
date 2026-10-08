@@ -1,7 +1,6 @@
 import os
 import sys
 
-# Ensure backend root is on sys.path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import pytest
@@ -30,7 +29,6 @@ engine = create_engine(
 )
 TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
-
 @pytest.fixture(scope="session", autouse=True)
 def setup_test_db():
     Base.metadata.create_all(bind=engine)
@@ -40,7 +38,6 @@ def setup_test_db():
     yield
     Base.metadata.drop_all(bind=engine)
 
-
 @pytest.fixture
 def db_session():
     db = TestingSessionLocal()
@@ -48,7 +45,6 @@ def db_session():
         yield db
     finally:
         db.close()
-
 
 @pytest.fixture
 def client(db_session):
@@ -63,24 +59,20 @@ def client(db_session):
         yield test_client
     app.dependency_overrides.clear()
 
-
 @pytest.fixture
 def admin_auth_headers():
-    token = create_access_token(1)  # Admin user seeded with id 1
+    token = create_access_token(1)
     return {"Authorization": f"Bearer {token}"}
-
 
 @pytest.fixture
 def creator_auth_headers():
-    token = create_access_token(2)  # Creator user seeded with id 2
+    token = create_access_token(2)
     return {"Authorization": f"Bearer {token}"}
-
 
 @pytest.fixture
 def influencer_auth_headers():
-    token = create_access_token(3)  # Influencer user seeded with id 3
+    token = create_access_token(3)
     return {"Authorization": f"Bearer {token}"}
-
 
 @pytest.fixture
 def freelancer_auth_headers():

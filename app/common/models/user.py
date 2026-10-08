@@ -8,6 +8,7 @@ from app.core.database import Base
 if TYPE_CHECKING:
     from app.common.models.social import Profile
     from app.common.models.story import Story
+    from app.common.models.post import Post
 
 
 class User(Base):
@@ -105,4 +106,5 @@ class User(Base):
         self._ensure_profile().location = value
 
     profile: Mapped[Optional["Profile"]] = relationship("Profile", back_populates="user", uselist=False, cascade="all, delete-orphan")
-    stories: Mapped[list["Story"]] = relationship("Story", back_populates="owner", cascade="all, delete-orphan")
+    stories: Mapped[list["Story"]] = relationship("Story", back_populates="owner", foreign_keys="[Story.user_id]", cascade="all, delete-orphan")
+    posts: Mapped[list["Post"]] = relationship("Post", back_populates="owner", foreign_keys="[Post.user_id]", cascade="all, delete-orphan")

@@ -63,7 +63,6 @@ async def lifespan(app: FastAPI):
             except asyncio.CancelledError:
                 pass
 
-
 app = FastAPI(
     title=settings.PROJECT_NAME,
     version="1.0.0",
@@ -84,7 +83,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-
 @app.exception_handler(StarletteHTTPException)
 async def http_exception_handler(request, exc: StarletteHTTPException):
     return JSONResponse(
@@ -93,11 +91,9 @@ async def http_exception_handler(request, exc: StarletteHTTPException):
         headers=getattr(exc, "headers", None),
     )
 
-
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request, exc: RequestValidationError):
     return JSONResponse(status_code=422, content={"detail": jsonable_encoder(exc.errors())})
-
 
 @app.get("/health", tags=["Health"])
 def health_check() -> dict:
@@ -109,6 +105,7 @@ for _router in (
     auth_router,
     story_router,
     story_settings_router,
+    post_router,
     message_router,
     calls_router,
     post_router,
