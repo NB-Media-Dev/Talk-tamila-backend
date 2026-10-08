@@ -65,6 +65,14 @@ STARTUP_STATEMENTS: tuple[str, ...] = (
     "ALTER TABLE direct_messages ADD COLUMN story_id INT NULL",
     "ALTER TABLE direct_messages ADD CONSTRAINT fk_direct_messages_story "
     "FOREIGN KEY (story_id) REFERENCES stories(story_id) ON DELETE SET NULL",
+    # --- posts: columns older databases may be missing
+    "ALTER TABLE posts ADD COLUMN post_type VARCHAR(20) NOT NULL DEFAULT 'text'",
+    "ALTER TABLE posts ADD COLUMN content TEXT NULL",
+    "ALTER TABLE posts ADD COLUMN media_type VARCHAR(20) NULL",
+    "ALTER TABLE posts ADD COLUMN media_mime VARCHAR(100) NULL",
+    "ALTER TABLE posts ADD COLUMN media_size INT NULL",
+    "ALTER TABLE posts ADD COLUMN media_data LONGBLOB NULL",
+    "ALTER TABLE posts ADD COLUMN gif_url VARCHAR(1000) NULL",
     # --- scheduled posts
     "ALTER TABLE posts ADD COLUMN status VARCHAR(20) NOT NULL DEFAULT 'published'",
     "ALTER TABLE posts ADD COLUMN scheduled_at DATETIME NULL",

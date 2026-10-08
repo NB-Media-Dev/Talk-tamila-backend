@@ -250,8 +250,23 @@ class PostService:
 
     # ------------------------------------------------------------------- read
     @staticmethod
+    def _publish_due_safely(db: Session) -> None:
+        """Safety net: publish anything that is already due before we read posts.
+
+        The background scheduler normally does this every few seconds. Doing it here too means
+        a due post still appears even if the scheduler is paused, the server just woke up, or
+        it was down at the scheduled time. Reads never fail because of this.
+        """
+        try:
+            PostService.publish_due_posts(db)
+        except Exception:
+            db.rollback()
+            logger.exception("Lazy publish before read failed")
+
+    @staticmethod
     def get_feed(db: Session, viewer: User, limit: int, before_id: Optional[int]) -> FeedResponse:
         """Published posts, newest first by publish time. Scheduled posts never appear."""
+        PostService._publish_due_safely(db)
         stmt = (
             select(Post)
             .join(User, User.user_id == Post.user_id)
@@ -280,6 +295,51 @@ class PostService:
         return PostService._build_feed(db, rows, viewer, has_more=has_more)
 
     @staticmethod
+    def get_user_posts(
+        username_or_id: str,
+        db: Session,
+        current_user: User,
+        limit: int = 30,
+        offset: int = 0,
+    ) -> FeedResponse:
+        """Published posts of one person for their profile grid, newest first.
+
+        Scheduled posts never show here, not even to their owner. Admins manage them on the
+        schedule page.
+        """
+        PostService._publish_due_safely(db)
+        limit = max(1, min(int(limit or 30), 60))
+        offset = max(0, int(offset or 0))
+
+        term = (username_or_id or "").strip().lstrip("@")
+        if not term:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+        user = db.execute(
+            select(User).where(func.lower(User.username) == term.lower(), User.is_active.is_(True))
+        ).scalar_one_or_none()
+        if user is None and term.isdigit():
+            user = db.execute(
+                select(User).where(User.user_id == int(term), User.is_active.is_(True))
+            ).scalar_one_or_none()
+        if user is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
+        rows = list(
+            db.execute(
+                select(Post)
+                .where(Post.user_id == user.user_id, Post.status == STATUS_PUBLISHED)
+                .order_by(Post.published_at.desc(), Post.post_id.desc())
+                .limit(limit + 1)
+                .offset(offset)
+            )
+            .scalars()
+            .all()
+        )
+        has_more = len(rows) > limit
+        rows = rows[:limit]
+        return PostService._build_feed(db, rows, current_user, has_more=has_more)
+
+    @staticmethod
     def list_scheduled(
         db: Session,
         viewer: User,
@@ -289,6 +349,7 @@ class PostService:
         to_at: Optional[datetime],
     ) -> ScheduledListResponse:
         """Scheduled posts for admins, soonest first. `from_at`/`to_at` are naive UTC."""
+        PostService._publish_due_safely(db)
         conditions = [Post.status == STATUS_SCHEDULED]
         if from_at is not None:
             conditions.append(Post.scheduled_at >= from_at)
