@@ -25,6 +25,7 @@ from app.core.dependencies import (
 
 router = APIRouter(prefix="/posts", tags=["Posts"])
 
+_RANGE_RE = re.compile(r"^bytes=(\d*)-(\d*)$")
 
 
 @router.post("", response_model=FeedResponse, status_code=status.HTTP_201_CREATED)
@@ -70,14 +71,14 @@ async def create_post(
     )
 
 
-@router.get("/{post_id:int}", response_model=PostItemResponse)
-def get_post_detail(
-    post_id: int,
-    current_user: Optional[User] = Depends(get_optional_current_user),
+@router.get("", response_model=FeedResponse)
+def get_feed(
+    limit: int = Query(default=10, ge=1, le=30),
+    before_id: Optional[int] = Query(default=None, ge=1),
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
-) -> PostItemResponse:
-    """Fetch detail for a single post."""
-    return PostService.get_post_by_id(post_id=post_id, db=db, current_user=current_user)
+) -> FeedResponse:
+    return PostService.get_feed(db, current_user, limit, before_id)
 
 
 @router.get("/scheduled", response_model=ScheduledListResponse)
@@ -125,20 +126,14 @@ def delete_post(
     return PostService.delete_post(db, current_user, post_id)
 
 
-@router.post("/{post_id:int}/comment", response_model=PostCommentResponse)
-def add_post_comment(
+@router.post("/{post_id:int}/vote", response_model=PollOut)
+def vote_in_poll(
     post_id: int,
-    payload: PostCommentRequest,
+    payload: VoteRequest,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
-) -> PostCommentResponse:
-    """Add a comment to a post."""
-    return PostService.add_comment(
-        post_id=post_id,
-        payload=payload,
-        current_user=current_user,
-        db=db,
-    )
+) -> PollOut:
+    return PostService.vote(db, current_user, post_id, payload.option_id)
 
 
 def _parse_range(range_header: Optional[str], size: int):

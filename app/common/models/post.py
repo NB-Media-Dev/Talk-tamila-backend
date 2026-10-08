@@ -1,20 +1,23 @@
-from datetime import datetime
-from typing import TYPE_CHECKING, Optional, List
+from datetime import datetime, timezone
+from typing import Optional, TYPE_CHECKING
+
 from sqlalchemy import (
-    Boolean,
     DateTime,
-    Float,
     ForeignKey,
+    Index,
     Integer,
+    LargeBinary,
     String,
     Text,
     UniqueConstraint,
-    func,
 )
-from sqlalchemy.dialects.mysql import LONGTEXT
+from sqlalchemy.dialects.mysql import LONGBLOB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
+
+if TYPE_CHECKING:
+    from app.common.models.user import User
 
 STATUS_PUBLISHED = "published"
 STATUS_SCHEDULED = "scheduled"
@@ -32,33 +35,20 @@ class Post(Base):
     user_id: Mapped[int] = mapped_column(
         ForeignKey("users.user_id", ondelete="CASCADE", onupdate="CASCADE"),
         nullable=False,
-        index=True,
     )
-    username: Mapped[str | None] = mapped_column(String(100), nullable=True)
-    title: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    caption: Mapped[str | None] = mapped_column(Text().with_variant(LONGTEXT, "mysql"), nullable=True)
-    media_type: Mapped[str] = mapped_column(String(20), default="image", nullable=False) 
-    media_url: Mapped[str | None] = mapped_column(Text().with_variant(LONGTEXT, "mysql"), nullable=True)
-    thumbnail_url: Mapped[str | None] = mapped_column(Text().with_variant(LONGTEXT, "mysql"), nullable=True)
-    aspect_ratio: Mapped[float | None] = mapped_column(Float, nullable=True)
-    platforms: Mapped[str | None] = mapped_column(Text, nullable=True) 
-    tags: Mapped[str | None] = mapped_column(Text, nullable=True) 
-    poll_data: Mapped[str | None] = mapped_column(Text, nullable=True) 
-    audience: Mapped[str] = mapped_column(String(50), default="PUBLIC", nullable=False, index=True)
-    status: Mapped[str] = mapped_column(String(20), default="published", nullable=False)  # published, scheduled, draft, archived
-    location: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    scheduled_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    # text | image | video | gif | poll
+    post_type: Mapped[str] = mapped_column(String(20), nullable=False, default="text")
+    # Body text, image/video caption, or the poll question.
+    content: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
-    views_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
-    likes_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
-    comments_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
-    shares_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
-    saves_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    media_type: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    media_mime: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    media_size: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    media_data: Mapped[Optional[bytes]] = mapped_column(
+        LargeBinary().with_variant(LONGBLOB(), "mysql"), nullable=True, deferred=True
+    )
 
-    is_deleted: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
-    deleted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), index=True)
-    updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
+    gif_url: Mapped[Optional[str]] = mapped_column(String(1000), nullable=True)
 
     # published | scheduled. Scheduled posts are invisible to everyone but admins.
     status: Mapped[str] = mapped_column(
@@ -71,6 +61,21 @@ class Post(Base):
 
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now)
 
+    owner: Mapped["User"] = relationship("User", back_populates="posts", foreign_keys=[user_id])
+    poll_options: Mapped[list["PostPollOption"]] = relationship(
+        "PostPollOption",
+        back_populates="post",
+        cascade="all, delete-orphan",
+        order_by="PostPollOption.position",
+    )
+
+    __table_args__ = (
+        Index("idx_posts_user_id", "user_id"),
+        Index("idx_posts_created_at", "created_at"),
+        Index("idx_posts_status_scheduled", "status", "scheduled_at"),
+        Index("idx_posts_published_at", "published_at", "post_id"),
+    )
+
     @property
     def id(self) -> int:
         return self.post_id
@@ -80,16 +85,10 @@ class Post(Base):
         return self.user_id
 
 
-class PostLike(Base):
-    __tablename__ = "post_likes"
-    __table_args__ = (
-        Index("idx_posts_user_id", "user_id"),
-        Index("idx_posts_created_at", "created_at"),
-        Index("idx_posts_status_scheduled", "status", "scheduled_at"),
-        Index("idx_posts_published_at", "published_at", "post_id"),
-    )
+class PostPollOption(Base):
+    __tablename__ = "post_poll_options"
 
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    option_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     post_id: Mapped[int] = mapped_column(
         ForeignKey("posts.post_id", ondelete="CASCADE"), nullable=False
     )
@@ -112,68 +111,10 @@ class PostPollVote(Base):
         ForeignKey("post_poll_options.option_id", ondelete="CASCADE"), nullable=False
     )
     user_id: Mapped[int] = mapped_column(
-        ForeignKey("users.user_id", ondelete="CASCADE"),
-        nullable=False,
-        index=True,
+        ForeignKey("users.user_id", ondelete="CASCADE"), nullable=False
     )
-    user_name: Mapped[str | None] = mapped_column(String(100), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now)
 
-    post: Mapped["Post"] = relationship("Post", back_populates="likes")
-    user: Mapped["User"] = relationship("User")
-
-
-class PostComment(Base):
-    __tablename__ = "post_comments"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    post_id: Mapped[int] = mapped_column(
-        ForeignKey("posts.post_id", ondelete="CASCADE"),
-        nullable=False,
-        index=True,
-    )
-    user_id: Mapped[int] = mapped_column(
-        ForeignKey("users.user_id", ondelete="CASCADE"),
-        nullable=False,
-        index=True,
-    )
-    user_name: Mapped[str | None] = mapped_column(String(100), nullable=True)
-    user_avatar: Mapped[str | None] = mapped_column(Text, nullable=True)
-    comment_text: Mapped[str] = mapped_column(Text().with_variant(LONGTEXT, "mysql"), nullable=False)
-    parent_comment_id: Mapped[int | None] = mapped_column(
-        ForeignKey("post_comments.id", ondelete="CASCADE"),
-        nullable=True,
-    )
-    is_hidden: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
-
-    post: Mapped["Post"] = relationship("Post", back_populates="comments")
-    user: Mapped["User"] = relationship("User")
-
-
-class PostShare(Base):
-    __tablename__ = "post_shares"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    post_id: Mapped[int] = mapped_column(
-        ForeignKey("posts.post_id", ondelete="CASCADE"),
-        nullable=False,
-        index=True,
-    )
-    user_id: Mapped[int] = mapped_column(
-        ForeignKey("users.user_id", ondelete="CASCADE"),
-        nullable=False,
-        index=True,
-    )
-    platform: Mapped[str | None] = mapped_column(String(50), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
-
-    post: Mapped["Post"] = relationship("Post", back_populates="shares")
-    user: Mapped["User"] = relationship("User")
-
-
-class PostSave(Base):
-    __tablename__ = "post_saves"
     __table_args__ = (
         UniqueConstraint("post_id", "user_id", name="uq_post_poll_votes_post_user"),
         Index("idx_ppv_option_id", "option_id"),

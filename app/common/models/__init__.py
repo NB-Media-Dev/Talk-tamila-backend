@@ -8,14 +8,6 @@ from app.common.models.story import (
     StoryReport,
     StoryMute,
 )
-from app.common.models.post import (
-    Post,
-    PostLike,
-    PostComment,
-    PostShare,
-    PostSave,
-    PostView,
-)
 from app.common.models.social import Profile, Notification, Follow, CloseFriend
 from app.common.models.music import MusicTrack
 from app.common.models.messaging import DirectMessage, MessageReaction
@@ -31,12 +23,6 @@ __all__ = [
     "StoryShare",
     "StoryReport",
     "StoryMute",
-    "Post",
-    "PostLike",
-    "PostComment",
-    "PostShare",
-    "PostSave",
-    "PostView",
     "Profile",
     "Notification",
     "Follow",
