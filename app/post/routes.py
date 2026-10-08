@@ -121,6 +121,28 @@ def get_post_comments(
     return PostService.get_comments(post_id=post_id, db=db, limit=limit, offset=offset)
 
 
+@router.delete("/{post_id:int}/comments/{comment_id:int}")
+def delete_post_comment(
+    post_id: int,
+    comment_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    """Delete a post comment (author or post owner or admin)."""
+    return PostService.delete_comment(post_id=post_id, comment_id=comment_id, current_user=current_user, db=db)
+
+
+@router.post("/{post_id:int}/comments/{comment_id:int}/toggle-hide")
+def toggle_hide_post_comment(
+    post_id: int,
+    comment_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    """Toggle hide status of a post comment (author or post owner or admin)."""
+    return PostService.toggle_hide_comment(post_id=post_id, comment_id=comment_id, current_user=current_user, db=db)
+
+
 @router.post("/{post_id:int}/save")
 def toggle_post_save(
     post_id: int,

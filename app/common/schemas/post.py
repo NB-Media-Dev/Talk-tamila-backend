@@ -57,6 +57,7 @@ class PostCommentResponse(BaseModel):
     user_avatar: Optional[str] = None
     comment_text: str
     parent_comment_id: Optional[int] = None
+    is_hidden: Optional[bool] = False
     created_at: str
     created_at_human: Optional[str] = None
     model_config = ConfigDict(from_attributes=True)

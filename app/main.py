@@ -167,10 +167,15 @@ async def lifespan(app: FastAPI):
                 "user_avatar TEXT NULL, "
                 "comment_text LONGTEXT NOT NULL, "
                 "parent_comment_id INT NULL, "
+                "is_hidden BOOLEAN NOT NULL DEFAULT FALSE, "
                 "created_at DATETIME DEFAULT CURRENT_TIMESTAMP, "
                 "INDEX idx_pc_post (post_id), "
                 "INDEX idx_pc_user (user_id)"
                 ")",
+                "ALTER TABLE post_comments ADD COLUMN user_name VARCHAR(100) NULL",
+                "ALTER TABLE post_comments ADD COLUMN user_avatar TEXT NULL",
+                "ALTER TABLE post_comments ADD COLUMN parent_comment_id INT NULL",
+                "ALTER TABLE post_comments ADD COLUMN is_hidden BOOLEAN NOT NULL DEFAULT FALSE",
                 "CREATE TABLE IF NOT EXISTS post_shares ("
                 "id INT AUTO_INCREMENT PRIMARY KEY, "
                 "post_id INT NOT NULL, "

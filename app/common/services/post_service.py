@@ -15,6 +15,7 @@ from app.common.models.post import (
     PostShare,
     PostView,
 )
+from app.common.models.social import Follow, Notification
 from app.common.models.user import User
 from app.common.schemas.post import (
     PostAuthorInfo,
@@ -214,6 +215,37 @@ class PostService:
         # Increment admin profile posts count
         admin_profile = current_admin._ensure_profile()
         admin_profile.posts_count = (admin_profile.posts_count or 0) + 1
+
+        # Notify mentioned users in caption
+        if payload.caption:
+            mentions = re.findall(r"@([A-Za-z0-9_]+)", payload.caption)
+            if mentions:
+                mentioned_users = db.query(User).filter(User.username.in_(mentions)).all()
+                for mu in mentioned_users:
+                    if mu.user_id != current_admin.user_id:
+                        db.add(
+                            Notification(
+                                user_id=mu.user_id,
+                                type="post_mention",
+                                message=f"{current_admin.username or 'Admin'} mentioned you in a post: {post.caption[:60]}",
+                                reference_id=post.post_id,
+                                is_read=False,
+                            )
+                        )
+
+        # Notify author's followers about the new post
+        followers = db.query(Follow).filter(Follow.following_id == current_admin.user_id).all()
+        for f in followers:
+            if f.follower_id != current_admin.user_id:
+                db.add(
+                    Notification(
+                        user_id=f.follower_id,
+                        type="post",
+                        message=f"{current_admin.username or 'Admin'} published a new post.",
+                        reference_id=post.post_id,
+                        is_read=False,
+                    )
+                )
 
         db.commit()
         db.refresh(post)
@@ -481,6 +513,13 @@ class PostService:
             db.delete(existing_like)
             post.likes_count = max(0, post.likes_count - 1)
             liked = False
+            # Remove any unread post_like notification if unliked
+            db.query(Notification).filter(
+                Notification.user_id == post.user_id,
+                Notification.type.in_(["post_like", "like"]),
+                Notification.reference_id == post.post_id,
+                Notification.message.like(f"{current_user.username}%"),
+            ).delete(synchronize_session=False)
         else:
             new_like = PostLike(
                 post_id=post_id,
@@ -490,6 +529,17 @@ class PostService:
             db.add(new_like)
             post.likes_count = post.likes_count + 1
             liked = True
+
+            # Create notification for post owner (if not liking own post)
+            if post.user_id and post.user_id != current_user.user_id:
+                notif = Notification(
+                    user_id=post.user_id,
+                    type="post_like",
+                    message=f"{current_user.username or 'Someone'} liked your post.",
+                    reference_id=post.post_id,
+                    is_read=False,
+                )
+                db.add(notif)
 
         db.commit()
         return {
@@ -520,6 +570,38 @@ class PostService:
         db.add(comment)
         post.comments_count = post.comments_count + 1
 
+        # Check parent comment for reply notification
+        parent_comment = None
+        if payload.parent_comment_id:
+            parent_comment = db.query(PostComment).filter(PostComment.id == payload.parent_comment_id).first()
+
+        # 1) If this is a reply to another user's comment, notify parent comment author
+        if parent_comment and parent_comment.user_id and parent_comment.user_id != current_user.user_id:
+            reply_snippet = comment.comment_text[:60]
+            db.add(
+                Notification(
+                    user_id=parent_comment.user_id,
+                    type="post_comment_reply",
+                    message=f"{current_user.username or 'Someone'} replied to your comment: {reply_snippet}",
+                    reference_id=post.post_id,
+                    is_read=False,
+                )
+            )
+
+        # 2) Notify post owner (if not commenting on own post and not already notified as parent author)
+        post_owner_already_notified = parent_comment and parent_comment.user_id == post.user_id
+        if post.user_id and post.user_id != current_user.user_id and not post_owner_already_notified:
+            comment_snippet = comment.comment_text[:60]
+            db.add(
+                Notification(
+                    user_id=post.user_id,
+                    type="post_comment",
+                    message=f"{current_user.username or 'Someone'} commented on your post: {comment_snippet}",
+                    reference_id=post.post_id,
+                    is_read=False,
+                )
+            )
+
         db.commit()
         db.refresh(comment)
 
@@ -531,6 +613,7 @@ class PostService:
             user_avatar=comment.user_avatar,
             comment_text=comment.comment_text,
             parent_comment_id=comment.parent_comment_id,
+            is_hidden=bool(getattr(comment, "is_hidden", False)),
             created_at=_format_iso(comment.created_at),
             created_at_human=_format_human_time(comment.created_at),
         )
@@ -559,11 +642,74 @@ class PostService:
                 user_avatar=c.user_avatar,
                 comment_text=c.comment_text,
                 parent_comment_id=c.parent_comment_id,
+                is_hidden=bool(getattr(c, "is_hidden", False)),
                 created_at=_format_iso(c.created_at),
                 created_at_human=_format_human_time(c.created_at),
             )
             for c in comments
         ]
+
+    @staticmethod
+    def delete_comment(
+        post_id: int,
+        comment_id: int,
+        current_user: User,
+        db: Session,
+    ) -> dict:
+        post = db.query(Post).filter(Post.post_id == post_id, Post.is_deleted == False).first()
+        if not post:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Post not found")
+
+        comment = db.query(PostComment).filter(PostComment.id == comment_id, PostComment.post_id == post_id).first()
+        if not comment:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Comment not found")
+
+        is_comment_author = comment.user_id == current_user.user_id
+        is_post_owner = post.user_id == current_user.user_id
+        is_admin = getattr(current_user, "role", "").lower() == "admin"
+
+        if not (is_comment_author or is_post_owner or is_admin):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not authorized to delete this comment")
+
+        # If it's a parent comment, also delete child replies and count them
+        child_comments = db.query(PostComment).filter(PostComment.parent_comment_id == comment_id).all()
+        child_count = len(child_comments)
+        for child in child_comments:
+            db.delete(child)
+
+        db.delete(comment)
+        total_deleted = 1 + child_count
+        post.comments_count = max(0, post.comments_count - total_deleted)
+        db.commit()
+
+        return {"success": True, "message": "Comment deleted successfully", "comment_id": comment_id, "total_deleted": total_deleted}
+
+    @staticmethod
+    def toggle_hide_comment(
+        post_id: int,
+        comment_id: int,
+        current_user: User,
+        db: Session,
+    ) -> dict:
+        post = db.query(Post).filter(Post.post_id == post_id, Post.is_deleted == False).first()
+        if not post:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Post not found")
+
+        comment = db.query(PostComment).filter(PostComment.id == comment_id, PostComment.post_id == post_id).first()
+        if not comment:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Comment not found")
+
+        is_comment_author = comment.user_id == current_user.user_id
+        is_post_owner = post.user_id == current_user.user_id
+        is_admin = getattr(current_user, "role", "").lower() == "admin"
+
+        if not (is_comment_author or is_post_owner or is_admin):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not authorized to hide this comment")
+
+        comment.is_hidden = not bool(getattr(comment, "is_hidden", False))
+        db.commit()
+
+        return {"success": True, "is_hidden": comment.is_hidden, "comment_id": comment_id}
 
     @staticmethod
     def toggle_save(post_id: int, current_user: User, db: Session) -> dict:

@@ -32,13 +32,13 @@ class Post(Base):
     username: Mapped[str | None] = mapped_column(String(100), nullable=True)
     title: Mapped[str | None] = mapped_column(String(255), nullable=True)
     caption: Mapped[str | None] = mapped_column(Text().with_variant(LONGTEXT, "mysql"), nullable=True)
-    media_type: Mapped[str] = mapped_column(String(20), default="image", nullable=False)  # image, video, text, poll
+    media_type: Mapped[str] = mapped_column(String(20), default="image", nullable=False) 
     media_url: Mapped[str | None] = mapped_column(Text().with_variant(LONGTEXT, "mysql"), nullable=True)
     thumbnail_url: Mapped[str | None] = mapped_column(Text().with_variant(LONGTEXT, "mysql"), nullable=True)
     aspect_ratio: Mapped[float | None] = mapped_column(Float, nullable=True)
-    platforms: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON string array
-    tags: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON string array
-    poll_data: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON string for poll questions & votes
+    platforms: Mapped[str | None] = mapped_column(Text, nullable=True) 
+    tags: Mapped[str | None] = mapped_column(Text, nullable=True) 
+    poll_data: Mapped[str | None] = mapped_column(Text, nullable=True) 
     audience: Mapped[str] = mapped_column(String(50), default="PUBLIC", nullable=False, index=True)
     status: Mapped[str] = mapped_column(String(20), default="published", nullable=False)  # published, scheduled, draft, archived
     location: Mapped[str | None] = mapped_column(String(255), nullable=True)
@@ -116,6 +116,7 @@ class PostComment(Base):
         ForeignKey("post_comments.id", ondelete="CASCADE"),
         nullable=True,
     )
+    is_hidden: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
     post: Mapped["Post"] = relationship("Post", back_populates="comments")

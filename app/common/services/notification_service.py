@@ -7,11 +7,12 @@ from datetime import datetime, timezone
 from typing import List, Optional, Set
 from sqlalchemy.orm import Session
 from sqlalchemy import desc, select, delete, or_, func
-from app.common.models.social import Notification, Follow
-from app.common.schemas.social import NotificationResponse
 from app.common.models.messaging import DirectMessage, MESSAGE_KIND_CALL, ChatState
+from app.common.models.post import Post
+from app.common.models.social import Notification, Follow
 from app.common.models.story import Story, StoryLike
 from app.common.models.user import User
+from app.common.schemas.social import NotificationResponse
 
 
 def _utc_now_iso() -> str:
@@ -44,12 +45,14 @@ class NotificationService:
 
         dm_ids: Set[int] = {n.reference_id for n in raw_notifs if n.reference_id and n.type in ("new_message", "story_reply", "story_react")}
         story_ids: Set[int] = {n.reference_id for n in raw_notifs if n.reference_id and n.type in ("story_like", "story_reply", "story_react", "story_share", "STORY_MENTION", "STORY_SHARED", "story_mention", "story_shared")}
+        post_ids: Set[int] = {n.reference_id for n in raw_notifs if n.reference_id and n.type in ("post_like", "post_comment", "post_comment_reply", "post_mention", "post", "like", "comment")}
         follower_ids: Set[int] = {n.reference_id for n in raw_notifs if n.reference_id and n.type == "follow"}
         unames: Set[str] = {_uname(n.message) for n in raw_notifs if _uname(n.message)}
 
 
         dms = {d.id: d for d in db.execute(select(DirectMessage).where(DirectMessage.id.in_(dm_ids))).scalars().all()} if dm_ids else {}
         stories = {s for s in db.execute(select(Story.story_id).where(Story.story_id.in_(story_ids), Story.is_deleted == False)).scalars().all()} if story_ids else set()
+        posts = {p for p in db.execute(select(Post.post_id).where(Post.post_id.in_(post_ids), Post.is_deleted == False)).scalars().all()} if post_ids else set()
         follows = set(db.execute(select(Follow.follower_id).where(Follow.follower_id.in_(follower_ids), Follow.following_id == user_id)).scalars().all()) if follower_ids else set()
 
         likes: Set = set()
@@ -87,6 +90,8 @@ class NotificationService:
                 active = n.reference_id is None or n.reference_id in dms
             elif n.type in ("story_reply", "story_react", "story_share", "STORY_MENTION", "STORY_SHARED", "story_mention", "story_shared"):
                 active = n.reference_id in stories or (n.reference_id in dms)
+            elif n.type in ("post_like", "post_comment", "post_comment_reply", "post_mention", "post", "like", "comment"):
+                active = n.reference_id is None or n.reference_id in posts
             elif n.type == "follow":
                 active = n.reference_id in follows
 
