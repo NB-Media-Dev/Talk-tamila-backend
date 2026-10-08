@@ -1,8 +1,7 @@
 import json
-import os
 from pathlib import Path
 from typing import List, Optional, Union
-from pydantic import field_validator
+from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 _ENV_FILE = Path(__file__).resolve().parent.parent.parent / ".env"
@@ -21,6 +20,9 @@ class Settings(BaseSettings):
     DEBUG: bool = True
 
     DATABASE_URL: str = "mysql+pymysql://root:1234@localhost:3306/talktamila"
+    # Path to the database provider's CA certificate (e.g. Aiven's ca.pem). When set,
+    # the server certificate and hostname are verified.
+    DATABASE_SSL_CA: str = ""
 
     SECRET_KEY: str = "dev_secret_key_change_in_production_jwt_9348572849"
     ALGORITHM: str = "HS256"
@@ -34,6 +36,9 @@ class Settings(BaseSettings):
     SMTP_FROM_EMAIL: str = ""
     SMTP_FROM_NAME: str = "Talk Tamila"
 
+    # Required in production to create the first admin account. Never hard-code it.
+    ADMIN_BOOTSTRAP_PASSWORD: str = ""
+
     # Brevo (transactional email) - used for OTP emails
     BREVO_API_KEY: str = ""
 
@@ -43,6 +48,16 @@ class Settings(BaseSettings):
     VAPID_PUBLIC_KEY: str = ""
     VAPID_PRIVATE_KEY: str = ""
     VAPID_SUBJECT: str = ""
+
+    # Publishes scheduled posts when their time arrives.
+    POST_SCHEDULER_ENABLED: bool = True
+    POST_SCHEDULER_INTERVAL_SECONDS: int = 30
+
+    # Login / OTP throttling.
+    RATE_LIMIT_ENABLED: bool = True
+
+    # Show /docs, /redoc and the OpenAPI file. Defaults to on outside production.
+    ENABLE_DOCS: Optional[bool] = None
 
     BACKEND_CORS_ORIGINS: Union[str, List[str]] = [
         "http://localhost:3000",
@@ -80,6 +95,21 @@ class Settings(BaseSettings):
                 "environment variable when ENVIRONMENT=production."
             )
         return v
+
+
+    @model_validator(mode="after")
+    def reject_dev_database_in_production(self) -> "Settings":
+        if self.ENVIRONMENT.lower() == "production" and "root:1234@" in self.DATABASE_URL:
+            raise ValueError("Set DATABASE_URL to your real database when ENVIRONMENT=production.")
+        return self
+
+    @property
+    def is_production(self) -> bool:
+        return self.ENVIRONMENT.lower() == "production"
+
+    @property
+    def docs_enabled(self) -> bool:
+        return (not self.is_production) if self.ENABLE_DOCS is None else self.ENABLE_DOCS
 
 
 settings = Settings()

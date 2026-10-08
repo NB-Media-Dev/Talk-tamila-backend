@@ -1,7 +1,7 @@
 from typing import List, Optional
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from app.common.enums import StoryAudienceEnum, StoryAudience
+from app.common.enums import StoryAudienceEnum
 
 
 class StorySlideResponse(BaseModel):

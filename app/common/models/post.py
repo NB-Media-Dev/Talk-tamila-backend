@@ -16,13 +16,16 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
 
+STATUS_PUBLISHED = "published"
+STATUS_SCHEDULED = "scheduled"
+
 
 def _utc_now() -> datetime:
+    """Current UTC time as a naive datetime (the database stores naive UTC)."""
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 class Post(Base):
-
     __tablename__ = "posts"
 
     post_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -44,6 +47,15 @@ class Post(Base):
 
     gif_url: Mapped[Optional[str]] = mapped_column(String(1000), nullable=True)
 
+    # published | scheduled. Scheduled posts are invisible to everyone but admins.
+    status: Mapped[str] = mapped_column(
+        String(20), nullable=False, default=STATUS_PUBLISHED, server_default=STATUS_PUBLISHED
+    )
+    # When a scheduled post should go live (naive UTC). Kept after publishing for history.
+    scheduled_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    # When the post became visible (naive UTC). NULL while it is still scheduled.
+    published_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now)
 
     poll_options: Mapped[list["PostPollOption"]] = relationship(
@@ -56,6 +68,8 @@ class Post(Base):
     __table_args__ = (
         Index("idx_posts_user_id", "user_id"),
         Index("idx_posts_created_at", "created_at"),
+        Index("idx_posts_status_scheduled", "status", "scheduled_at"),
+        Index("idx_posts_published_at", "published_at", "post_id"),
     )
 
 
@@ -75,7 +89,6 @@ class PostPollOption(Base):
 
 
 class PostPollVote(Base):
-
     __tablename__ = "post_poll_votes"
 
     vote_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -94,4 +107,3 @@ class PostPollVote(Base):
         UniqueConstraint("post_id", "user_id", name="uq_post_poll_votes_post_user"),
         Index("idx_ppv_option_id", "option_id"),
     )
-

@@ -18,6 +18,8 @@ from app.main import app
 from app.utils.seed import seed_db_data
 
 settings.ENVIRONMENT = "production"
+settings.POST_SCHEDULER_ENABLED = False  # tests publish by calling the service directly
+settings.RATE_LIMIT_ENABLED = False
 
 TEST_DATABASE_URL = "sqlite:///:memory:"
 

@@ -115,14 +115,6 @@ def get_saved_stories(
     return StoryService.get_saved_stories(current_user, db)
 
 
-@router.get("/mutes", response_model=List[int])
-def get_muted_creators(
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-) -> List[int]:
-    return StoryService.get_muted_creators(current_user, db)
-
-
 @router.get("/music/trending", response_model=List[MusicTrackResponse])
 def get_trending_music(
     limit: int = Query(default=10, ge=1, le=50),
@@ -371,16 +363,6 @@ def mute_creator(
     db: Session = Depends(get_db),
 ) -> dict:
     return StoryService.mute_creator(user_id, current_user, db)
-
-
-@router.delete("/mute/{user_id:int}", response_model=StoryMuteResponse)
-def unmute_creator(
-    user_id: int,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-) -> dict:
-    return StoryService.unmute_creator(user_id, current_user, db)
-
 
 
 @router.post("/follow/{user_id:int}")

@@ -2,21 +2,16 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 from typing import List
 
-from app.core.dependencies import get_db, get_current_user, get_current_freelancer
+from app.core.dependencies import get_current_freelancer, get_db
 from app.common.models.user import User
 from app.common.schemas.story import StoryStatsResponse, StoryWithMetrics
 
 router = APIRouter(prefix="/freelancer", tags=["Freelancer"])
 
 
-@router.get("/health")
-def freelancer_health() -> dict:
-    return {"status": "ok"}
-
-
 @router.get("/stats")
 def get_freelancer_stats(
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_freelancer),
     db: Session = Depends(get_db),
 ):
     from app.common.services.story_service import StoryService
