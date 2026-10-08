@@ -36,9 +36,11 @@ class DirectMessage(Base):
     kind: Mapped[str] = mapped_column(
         String(20), default=MESSAGE_KIND_TEXT, server_default=MESSAGE_KIND_TEXT, nullable=False
     )
+
     story_id: Mapped[Optional[int]] = mapped_column(
         ForeignKey("stories.story_id", ondelete="SET NULL"), nullable=True
     )
+
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utc_now_naive, nullable=False)
     read_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
@@ -75,11 +77,11 @@ class ChatState(Base):
     partner_id: Mapped[int] = mapped_column(
         ForeignKey("users.user_id", ondelete="CASCADE"), nullable=False
     )
-    # The other person's inbox/thread is completely unaffected.
+
     cleared_before_id: Mapped[int] = mapped_column(
         Integer, nullable=False, default=0, server_default="0"
     )
-    # is opened again.
+
     manually_unread: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False, server_default="0"
     )
@@ -93,11 +95,10 @@ class MessageRequestAccept(Base):
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    # The person who accepted (the receiver of the request).
+   
     user_id: Mapped[int] = mapped_column(
         ForeignKey("users.user_id", ondelete="CASCADE"), nullable=False
     )
-    # The person whose request was accepted (the sender).
     partner_id: Mapped[int] = mapped_column(
         ForeignKey("users.user_id", ondelete="CASCADE"), nullable=False
     )

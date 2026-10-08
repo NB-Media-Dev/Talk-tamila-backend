@@ -2,6 +2,7 @@ import base64
 import json
 import logging
 import os
+import re
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -10,9 +11,11 @@ from sqlalchemy import and_, desc, func, or_
 from sqlalchemy.orm import Session, joinedload, selectinload
 
 from app.common.models.social import Notification, Follow, CloseFriend
+from app.common.models.moderation import UserBlock
 from app.common.models.story import (
     Story,
     StoryLike,
+    StoryMention,
     StoryMute,
     StoryReply,
     StoryReport,
@@ -21,7 +24,7 @@ from app.common.models.story import (
     StoryView,
 )
 from app.common.models.user import User
-from app.common.models.messaging import MESSAGE_KIND_STORY_REACTION, MESSAGE_KIND_STORY_REPLY
+from app.common.models.messaging import DirectMessage, MESSAGE_KIND_STORY_REACTION, MESSAGE_KIND_STORY_REPLY
 from app.common.services.message_service import MessageService
 from app.common.services.music_service import MusicService
 from app.common.schemas.story import (
@@ -31,10 +34,13 @@ from app.common.schemas.story import (
     StoryBatchResponse,
     StoryGroupResponse,
     StoryItemResponse,
+    StoryMentionItem,
     StoryReplyResponse,
+    StoryReshareRequest,
     StoryShareResponse,
     StorySlideResponse,
     StoryUserResponse,
+    MentionUserSearchItem,
 )
 
 logger = logging.getLogger("talktamila.story_service")
@@ -144,6 +150,124 @@ def fetch_batch_story_stats(story_ids: List[int], current_user_id: Optional[int]
     }
 
 
+def extract_mentioned_usernames(text: Optional[str]) -> List[str]:
+    if not text:
+        return []
+    matches = re.findall(r"@([a-zA-Z0-9_]+)", text)
+    seen = set()
+    result = []
+    for m in matches:
+        low = m.lower()
+        if low not in seen:
+            seen.add(low)
+            result.append(m)
+    return result
+
+
+def process_and_create_mentions(
+    db: Session,
+    story: Story,
+    mentions_payload: Optional[List[Any]],
+    caption: Optional[str],
+    current_user: User,
+) -> List[StoryMention]:
+    candidate_user_ids = set()
+    candidate_usernames = set()
+    coords_by_uid = {}
+    coords_by_uname = {}
+
+    if mentions_payload:
+        for m in mentions_payload:
+            uid = getattr(m, "user_id", None) if hasattr(m, "user_id") else (m.get("user_id") if isinstance(m, dict) else None)
+            uname = getattr(m, "username", None) if hasattr(m, "username") else (m.get("username") if isinstance(m, dict) else None)
+            x = getattr(m, "x", None) if hasattr(m, "x") else (m.get("x") if isinstance(m, dict) else None)
+            y = getattr(m, "y", None) if hasattr(m, "y") else (m.get("y") if isinstance(m, dict) else None)
+            if uid:
+                candidate_user_ids.add(int(uid))
+                coords_by_uid[int(uid)] = (x, y)
+            if uname:
+                clean_uname = uname.strip().lstrip("@").lower()
+                candidate_usernames.add(clean_uname)
+                coords_by_uname[clean_uname] = (x, y)
+
+    caption_unames = extract_mentioned_usernames(caption)
+    for u in caption_unames:
+        candidate_usernames.add(u.strip().lstrip("@").lower())
+
+    if not candidate_user_ids and not candidate_usernames:
+        return []
+
+    query_conds = []
+    if candidate_user_ids:
+        query_conds.append(User.user_id.in_(list(candidate_user_ids)))
+    if candidate_usernames:
+        query_conds.append(func.lower(User.username).in_(list(candidate_usernames)))
+
+    target_users = db.query(User).filter(or_(*query_conds), User.is_active.is_(True)).all()
+    created_mentions = []
+
+    for target in target_users:
+        # Check blocking
+        is_blocked = db.query(UserBlock).filter(
+            or_(
+                and_(UserBlock.blocker_id == current_user.id, UserBlock.blocked_id == target.user_id),
+                and_(UserBlock.blocker_id == target.user_id, UserBlock.blocked_id == current_user.id),
+            )
+        ).first() is not None
+
+        if is_blocked:
+            if mentions_payload:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Cannot mention @{target.username}: user is blocked."
+                )
+            continue
+
+        x, y = coords_by_uid.get(target.user_id, coords_by_uname.get((target.username or "").lower(), (None, None)))
+
+        existing = db.query(StoryMention).filter(
+            StoryMention.story_id == story.story_id,
+            StoryMention.mentioned_user_id == target.user_id,
+        ).first()
+
+        if not existing:
+            mention = StoryMention(
+                story_id=story.story_id,
+                mentioned_user_id=target.user_id,
+                created_by_user_id=current_user.id,
+                owner_user_id=current_user.id,
+                x=x,
+                y=y,
+                created_at=make_naive(utc_now()),
+            )
+            db.add(mention)
+            created_mentions.append(mention)
+
+            # Send Notification ONLY to mentioned user (STORY_MENTION)
+            if target.user_id != current_user.id:
+                notif = Notification(
+                    user_id=target.user_id,
+                    type="STORY_MENTION",
+                    message=f"{current_user.username} mentioned you in their story",
+                    reference_id=story.story_id,
+                    is_read=False,
+                    created_at=make_naive(utc_now()),
+                )
+                db.add(notif)
+
+    db.commit()
+    return created_mentions
+
+
+def is_story_root_active(s: Story, db: Session, now_naive: datetime) -> bool:
+    if not s.original_story_id or s.original_story_id == s.story_id:
+        return True
+    root = s.original_story or db.get(Story, s.original_story_id)
+    if not root or root.is_deleted or (root.expires_at and root.expires_at <= now_naive):
+        return False
+    return True
+
+
 def build_story_item(
     story: Story,
     current_user_id: Optional[int],
@@ -192,8 +316,59 @@ def build_story_item(
             verified=story.owner.role in ("influencer", "admin"),
         )
 
+    original_owner_data = None
+    orig_username = None
+    if story.original_owner_id:
+        orig_user = story.original_owner or db.get(User, story.original_owner_id)
+        if orig_user:
+            orig_username = orig_user.username
+            original_owner_data = StoryUserResponse(
+                id=orig_user.id,
+                user_id=orig_user.id,
+                username=orig_user.username or f"user_{orig_user.id}",
+                avatar=orig_user.avatar_url,
+                avatar_url=orig_user.avatar_url,
+                full_name=orig_user.full_name or orig_user.username,
+                role=orig_user.role or "influencer",
+                verified=orig_user.role in ("influencer", "admin"),
+            )
+
+    mentions_data: List[StoryMentionItem] = []
+    try:
+        mentions_list = story.mentions if hasattr(story, "mentions") and story.mentions is not None else db.query(StoryMention).filter(StoryMention.story_id == story.story_id).all()
+        for m in mentions_list:
+            m_user = m.mentioned_user or db.get(User, m.mentioned_user_id)
+            mentions_data.append(
+                StoryMentionItem(
+                    id=getattr(m, "id", None) or getattr(m, "mention_id", 0),
+                    story_id=m.story_id,
+                    mentioned_user_id=m.mentioned_user_id,
+                    created_by_user_id=m.created_by_user_id,
+                    username=m_user.username if m_user else None,
+                    full_name=m_user.full_name if m_user else None,
+                    avatar_url=m_user.avatar_url if m_user else None,
+                    x=getattr(m, "x", None),
+                    y=getattr(m, "y", None),
+                )
+            )
+    except Exception as e:
+        mentions_data = []
+
     now_naive = make_naive(utc_now())
-    is_active = (story.expires_at is None) or (story.expires_at > now_naive)
+    is_active = (not story.is_deleted) and (story.expires_at is None or story.expires_at > now_naive)
+
+    if story.original_story_id and story.original_story_id != story.story_id:
+        root = story.original_story or db.get(Story, story.original_story_id)
+        if not root or root.is_deleted or (root.expires_at and root.expires_at <= now_naive):
+            is_active = False
+
+    is_reshare = bool(story.parent_story_id or (story.original_story_id and story.original_story_id != story.story_id))
+
+    can_reshare = False
+    if current_user_id and current_user_id != story.user_id and is_active:
+        # User can only re-share if explicitly mentioned in THIS specific story
+        is_mentioned = any(m.mentioned_user_id == current_user_id for m in mentions_data)
+        can_reshare = is_mentioned
 
     return StoryItemResponse(
         story_id=story.story_id,
@@ -225,6 +400,15 @@ def build_story_item(
         liked_by_me=liked_by_me,
         username=story.owner.username if story.owner else f"user_{story.user_id}",
         user=owner_data,
+        parent_story_id=story.parent_story_id,
+        original_story_id=story.original_story_id,
+        original_owner_id=story.original_owner_id,
+        original_username=orig_username,
+        original_user=original_owner_data,
+        is_reshare=is_reshare,
+        can_reshare=can_reshare,
+        mentions=mentions_data,
+        status=story.status or ("deleted" if story.is_deleted else ("expired" if not is_active else "active")),
     )
 
 
@@ -254,6 +438,7 @@ def story_to_slide(story_item: StoryItemResponse, creator_name: str) -> StorySli
         media_url=story_item.media_url,
         media_type=story_item.media_type,
         caption=story_item.caption,
+        content=story_item.content,
         audience=story_item.audience or "PUBLIC",
         duration=5000,
         created_at=story_item.created_at,
@@ -266,6 +451,14 @@ def story_to_slide(story_item: StoryItemResponse, creator_name: str) -> StorySli
         musicTrack=music_label,
         music_url=story_item.music_url,
         replyPlaceholder=f"Reply to {creator_name}...",
+        parent_story_id=story_item.parent_story_id,
+        original_story_id=story_item.original_story_id,
+        original_owner_id=story_item.original_owner_id,
+        original_username=story_item.original_username,
+        is_reshare=story_item.is_reshare,
+        can_reshare=story_item.can_reshare,
+        mentions=story_item.mentions,
+        status=story_item.status,
     )
 
 
@@ -332,6 +525,7 @@ class StoryService:
         db.add(story)
         db.commit()
         db.refresh(story)
+        process_and_create_mentions(db, story, getattr(payload, "mentions", None), caption, current_user)
         logger.info("Story %s created via JSON by user %s", story.story_id, current_user.id)
         return build_story_item(story, current_user.id, db)
 
@@ -353,13 +547,14 @@ class StoryService:
 
         theme_val = (getattr(payload, "theme", "insta") or "insta").strip().lower()
         media_url = getattr(payload, "media_url", None) or f"gradient:{theme_val}"
+        caption_val = getattr(payload, "caption", None) or getattr(payload, "content", None)
 
         story = Story(
             user_id=current_user.id,
             username=current_user.username,
             media_url=media_url,
             media_type="text",
-            caption=getattr(payload, "caption", None),
+            caption=caption_val,
             audience=normalize_audience(getattr(payload, "audience", "PUBLIC"), is_admin=current_user.is_admin),
             created_at=now_naive,
             expires_at=expires_naive,
@@ -374,6 +569,7 @@ class StoryService:
         db.add(story)
         db.commit()
         db.refresh(story)
+        process_and_create_mentions(db, story, getattr(payload, "mentions", None), caption_val, current_user)
         return build_story_item(story, current_user.id, db)
 
     @staticmethod
@@ -483,6 +679,7 @@ class StoryService:
             .limit(limit)
             .all()
         )
+        stories = [s for s in stories if is_story_root_active(s, db, now_naive)]
         story_ids = [s.story_id for s in stories]
         batch_stats = fetch_batch_story_stats(story_ids, current_user.id, db)
         return [build_story_item(s, current_user.id, db, batch_stats=batch_stats) for s in stories]
@@ -542,7 +739,7 @@ class StoryService:
                 return s.user_id in cf_creator_ids
             return False
 
-        visible_stories = [s for s in active_stories if can_view(s)]
+        visible_stories = [s for s in active_stories if can_view(s) and is_story_root_active(s, db, now_naive)]
 
         story_ids = [s.story_id for s in visible_stories]
         batch_stats = fetch_batch_story_stats(story_ids, caller_id, db)
@@ -638,6 +835,7 @@ class StoryService:
             .order_by(desc(Story.created_at))
             .all()
         )
+        stories = [s for s in stories if is_story_root_active(s, db, now_naive)]
         story_ids = [s.story_id for s in stories]
         batch_stats = fetch_batch_story_stats(story_ids, current_user.id, db)
         return [build_story_item(s, current_user.id, db, batch_stats=batch_stats) for s in stories]
@@ -695,7 +893,7 @@ class StoryService:
                 return is_close_friend
             return False
 
-        visible_stories = [s for s in stories if can_view(s)]
+        visible_stories = [s for s in stories if can_view(s) and is_story_root_active(s, db, now_naive)]
         story_ids = [s.story_id for s in visible_stories]
         batch_stats = fetch_batch_story_stats(story_ids, current_user_id, db)
         return [build_story_item(s, current_user_id, db, batch_stats=batch_stats) for s in visible_stories]
@@ -732,6 +930,11 @@ class StoryService:
             ).first() is not None
             if not is_close_friend:
                 raise HTTPException(status_code=403, detail="Story only available to close friends.")
+
+        if story.original_story_id and story.original_story_id != story.story_id:
+            root = story.original_story or db.get(Story, story.original_story_id)
+            if not root or root.is_deleted or (root.expires_at and root.expires_at <= make_naive(utc_now())):
+                raise HTTPException(status_code=404, detail="Story not found or original story expired/deleted.")
 
         return build_story_item(story, current_user_id, db)
 
@@ -791,6 +994,7 @@ class StoryService:
         db.add(story)
         db.commit()
         db.refresh(story)
+        process_and_create_mentions(db, story, None, caption, current_user)
         logger.info("Story %s uploaded by user %s to MySQL demousertable", story.story_id, current_user.id)
         return build_story_item(story, current_user.id, db)
 
@@ -870,6 +1074,7 @@ class StoryService:
         db.commit()
         for s in created_stories:
             db.refresh(s)
+            process_and_create_mentions(db, s, None, s.caption, current_user)
 
         items = [build_story_item(s, current_user.id, db) for s in created_stories]
         return StoryBatchResponse(
@@ -890,7 +1095,7 @@ class StoryService:
             .filter(StoryView.story_id == story_id, StoryView.user_id == current_user.id)
             .first()
         )
-        # Resolve story sender / creator username
+      
         sender_name = None
         if story.user_id:
             story_owner = db.get(User, story.user_id)
@@ -935,7 +1140,7 @@ class StoryService:
         if story.user_id == current_user.id:
             raise HTTPException(status_code=400, detail="Cannot like your own story.")
 
-        # Resolve story owner / uploader username
+      
         owner_name = None
         if story.user_id:
             story_owner = db.get(User, story.user_id)
@@ -961,6 +1166,7 @@ class StoryService:
             db.commit()
 
             if story.user_id != current_user.id:
+              
                 StoryService._notify_story_owner(
                     db, story, "story_like", f"{current_user.username} liked your story"
                 )
@@ -998,6 +1204,27 @@ class StoryService:
         )
         if existing:
             db.delete(existing)
+          
+            if story.user_id != current_user.id:
+                try:
+                    db.query(Notification).filter(
+                        Notification.user_id == story.user_id,
+                        Notification.type == "story_like",
+                        Notification.reference_id == story_id,
+                        Notification.message.like(f"{current_user.username}%"),
+                    ).delete(synchronize_session=False)
+
+                   
+                    db.query(DirectMessage).filter(
+                        DirectMessage.sender_id == current_user.id,
+                        DirectMessage.receiver_id == story.user_id,
+                        DirectMessage.story_id == story_id,
+                        DirectMessage.kind == MESSAGE_KIND_STORY_REACTION,
+                        DirectMessage.body == "\u2764\ufe0f",
+                    ).delete(synchronize_session=False)
+                except Exception:
+                    logger.exception("Error cleaning up story_like notification or DM on unlike")
+
             db.commit()
 
         likes_count = (
@@ -1073,7 +1300,6 @@ class StoryService:
         if story.user_id == current_user.id:
             raise HTTPException(status_code=400, detail="Cannot reply to your own story.")
 
-        # Directly resolve story owner / receiver username
         receiver_name = None
         if story.user_id:
             story_owner = db.get(User, story.user_id)
@@ -1111,6 +1337,7 @@ class StoryService:
             except Exception:
                 db.rollback()
 
+           
             StoryService._send_story_message(
                 db, current_user.id, story, MESSAGE_KIND_STORY_REPLY, text
             )
@@ -1313,6 +1540,14 @@ class StoryService:
 
         if existing is not None:
             db.delete(existing)
+            try:
+                db.query(Notification).filter(
+                    Notification.user_id == following_id,
+                    Notification.type == "follow",
+                    Notification.reference_id == follower_id,
+                ).delete(synchronize_session=False)
+            except Exception:
+                pass
             follower = db.query(User).filter(User.user_id == follower_id).first()
             if follower is not None and follower.profile is not None:
                 follower.profile.following_count = max(0, follower.profile.following_count - 1)
@@ -1328,9 +1563,6 @@ class StoryService:
             "followers_count": target.followers_count if target else 0,
         }
 
-    # NOTE: close-friend add/remove/list now lives solely in
-    # app/story/settings_routes.py (`/stories/settings/close-friends/*`) —
-    # this was previously duplicated here and exposed at `/stories/close-friends/*`.
 
     @staticmethod
     def get_suggestions(current_user: User, db: Session, limit: int = 10) -> List[dict]:
@@ -1432,17 +1664,247 @@ class StoryService:
         if not story:
             raise HTTPException(status_code=404, detail="Story not found")
 
-        if current_user.id != story.user_id:
+        if current_user.id != story.user_id and not current_user.is_admin:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Only the author who created this story can delete it.",
             )
 
+        now_naive = make_naive(utc_now())
         story.is_deleted = True
-        story.deleted_at = make_naive(utc_now())
+        story.deleted_at = now_naive
+        story.status = "deleted"
+
+        # Cascade invalidation: when original story is deleted, all derived stories become unavailable!
+        derived_stories = db.query(Story).filter(
+            or_(
+                Story.original_story_id == story_id,
+                Story.parent_story_id == story_id,
+            ),
+            Story.is_deleted == False,
+        ).all()
+        for ds in derived_stories:
+            ds.is_deleted = True
+            ds.deleted_at = now_naive
+            ds.status = "deleted"
+
         db.commit()
-        logger.info("Story %s deleted by user %s", story_id, current_user.id)
+        logger.info("Story %s (and %s derived stories) deleted by user %s", story_id, len(derived_stories), current_user.id)
         return {"success": True, "message": "Story deleted successfully", "story_id": story_id}
+
+    @staticmethod
+    def re_share_story(
+        story_id: int,
+        payload: Optional[StoryReshareRequest],
+        current_user: User,
+        db: Session,
+    ) -> StoryItemResponse:
+        source_story = db.get(Story, story_id)
+        if not source_story or source_story.is_deleted:
+            raise HTTPException(status_code=404, detail="Story not found or has been deleted.")
+
+        now_naive = make_naive(utc_now())
+        if source_story.expires_at and source_story.expires_at <= now_naive:
+            raise HTTPException(status_code=400, detail="Cannot re-share an expired story.")
+
+        # Determine original story & original owner
+        if source_story.original_story_id and source_story.original_story_id != source_story.story_id:
+            root_story = db.get(Story, source_story.original_story_id)
+            if not root_story or root_story.is_deleted:
+                raise HTTPException(status_code=400, detail="Cannot re-share: original story was deleted.")
+            if root_story.expires_at and root_story.expires_at <= now_naive:
+                raise HTTPException(status_code=400, detail="Cannot re-share: original story has expired.")
+            orig_story_id = root_story.story_id
+            orig_owner_id = root_story.user_id
+        else:
+            orig_story_id = source_story.story_id
+            orig_owner_id = source_story.user_id
+
+        # Privacy and Block Check
+        for check_uid in {orig_owner_id, source_story.user_id}:
+            if check_uid and check_uid != current_user.id:
+                is_blocked = db.query(UserBlock).filter(
+                    or_(
+                        and_(UserBlock.blocker_id == current_user.id, UserBlock.blocked_id == check_uid),
+                        and_(UserBlock.blocker_id == check_uid, UserBlock.blocked_id == current_user.id),
+                    )
+                ).first() is not None
+                if is_blocked:
+                    raise HTTPException(status_code=403, detail="Cannot re-share this story due to privacy/block restrictions.")
+
+        # CRITICAL AUTHORIZATION: Only the user specifically mentioned in THIS story can re-share it!
+        has_mention = db.query(StoryMention).filter(
+            StoryMention.story_id == source_story.story_id,
+            StoryMention.mentioned_user_id == current_user.id,
+        ).first() is not None
+
+        if not has_mention and not current_user.is_admin:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="RESHARE_NOT_ALLOWED: You can only re-share stories where you were explicitly mentioned."
+            )
+
+        new_caption = getattr(payload, "caption", None) if payload else None
+        if new_caption is None:
+            new_caption = getattr(payload, "content", None) if payload else None
+        if new_caption is None:
+            new_caption = source_story.caption
+
+        audience = normalize_audience(getattr(payload, "audience", "PUBLIC") if payload else "PUBLIC", is_admin=current_user.is_admin)
+
+        new_story = Story(
+            user_id=current_user.id,
+            username=current_user.username,
+            media_url=source_story.media_url,
+            media_type=source_story.media_type,
+            caption=new_caption,
+            audience=audience,
+            parent_story_id=source_story.story_id,
+            original_story_id=orig_story_id,
+            original_owner_id=orig_owner_id,
+            status="active",
+            created_at=now_naive,
+            expires_at=now_naive + timedelta(hours=DEFAULT_DURATION_HOURS),
+            music_id=source_story.music_id,
+            music_title=source_story.music_title,
+            music_artist=source_story.music_artist,
+            music_url=source_story.music_url,
+            music_thumbnail=source_story.music_thumbnail,
+            music_duration=source_story.music_duration,
+            music_start_time=source_story.music_start_time,
+        )
+        db.add(new_story)
+        db.commit()
+        db.refresh(new_story)
+
+        # Send STORY_SHARED notification ONLY to the original Story owner
+        # Never send STORY_SHARED to intermediate sharers!
+        if orig_owner_id and orig_owner_id != current_user.id:
+            db.add(
+                Notification(
+                    user_id=orig_owner_id,
+                    type="STORY_SHARED",
+                    message=f"{current_user.username} shared your story",
+                    reference_id=new_story.story_id,
+                    is_read=False,
+                    created_at=now_naive,
+                )
+            )
+            db.commit()
+
+        # Process any mentions in new re-shared story (e.g. B mentions C)
+        mentions_input = getattr(payload, "mentions", None) if payload else None
+        process_and_create_mentions(db, new_story, mentions_input, new_caption, current_user)
+
+        return build_story_item(new_story, current_user.id, db)
+
+    @staticmethod
+    def search_mention_users(q: str, current_user: User, db: Session, limit: int = 20) -> List[MentionUserSearchItem]:
+        query = db.query(User).filter(User.user_id != current_user.id, User.is_active.is_(True))
+        term = q.strip().lstrip("@")
+        if term:
+            like = f"%{term}%"
+            query = query.filter(
+                or_(
+                    User.username.ilike(like),
+                    User.first_name.ilike(like),
+                    User.last_name.ilike(like),
+                    func.concat(User.first_name, " ", User.last_name).ilike(like),
+                )
+            )
+        users = query.order_by(User.first_name.asc(), User.user_id.asc()).limit(limit * 2).all()
+
+        blocked_ids = {
+            r[0] for r in db.query(UserBlock.blocked_id).filter(UserBlock.blocker_id == current_user.id).all()
+        } | {
+            r[0] for r in db.query(UserBlock.blocker_id).filter(UserBlock.blocked_id == current_user.id).all()
+        }
+
+        following_ids = {
+            r[0] for r in db.query(Follow.following_id).filter(Follow.follower_id == current_user.id).all()
+        }
+
+        results = []
+        for u in users:
+            if u.user_id in blocked_ids:
+                continue
+            results.append(
+                MentionUserSearchItem(
+                    id=u.user_id,
+                    user_id=u.user_id,
+                    username=u.username or f"user_{u.user_id}",
+                    full_name=u.full_name or u.username,
+                    avatar_url=u.avatar_url,
+                    role=u.role or "influencer",
+                    is_following=u.user_id in following_ids,
+                    is_blocked=False,
+                )
+            )
+            if len(results) >= limit:
+                break
+        return results
+
+    @staticmethod
+    def add_mention_to_story(
+        story_id: int,
+        mentioned_user_id: int,
+        x: Optional[float],
+        y: Optional[float],
+        current_user: User,
+        db: Session,
+    ) -> dict:
+        story = db.get(Story, story_id)
+        if not story or story.is_deleted:
+            raise HTTPException(status_code=404, detail="Story not found.")
+        if story.user_id != current_user.id:
+            raise HTTPException(status_code=403, detail="Only the story owner can add mentions.")
+
+        target = db.query(User).filter(User.user_id == mentioned_user_id, User.is_active.is_(True)).first()
+        if not target:
+            raise HTTPException(status_code=404, detail="User to mention not found.")
+
+        # Check blocking
+        is_blocked = db.query(UserBlock).filter(
+            or_(
+                and_(UserBlock.blocker_id == current_user.id, UserBlock.blocked_id == mentioned_user_id),
+                and_(UserBlock.blocker_id == mentioned_user_id, UserBlock.blocked_id == current_user.id),
+            )
+        ).first() is not None
+        if is_blocked:
+            raise HTTPException(status_code=400, detail=f"Cannot mention @{target.username}: user is blocked.")
+
+        # Avoid duplicate mention
+        existing = db.query(StoryMention).filter(
+            StoryMention.story_id == story.story_id,
+            StoryMention.mentioned_user_id == mentioned_user_id,
+        ).first()
+        if existing:
+            return {"success": True, "message": f"@{target.username} is already mentioned in this story."}
+
+        mention = StoryMention(
+            story_id=story.story_id,
+            mentioned_user_id=mentioned_user_id,
+            created_by_user_id=current_user.id,
+            owner_user_id=current_user.id,
+            x=x,
+            y=y,
+            created_at=make_naive(utc_now()),
+        )
+        db.add(mention)
+
+        if mentioned_user_id != current_user.id:
+            notif = Notification(
+                user_id=mentioned_user_id,
+                type="STORY_MENTION",
+                message=f"{current_user.username} mentioned you in their story",
+                reference_id=story.story_id,
+                is_read=False,
+                created_at=make_naive(utc_now()),
+            )
+            db.add(notif)
+
+        db.commit()
+        return {"success": True, "message": f"@{target.username} has been mentioned in your story."}
 
     @staticmethod
     def get_activity(story_id: int, current_user: User, db: Session) -> StoryActivityResponse:
@@ -1726,7 +2188,7 @@ class StoryService:
         if not story:
             raise HTTPException(status_code=404, detail="Story not found")
 
-        # Resolve story owner / uploader username
+        
         owner_name = None
         if story.user_id:
             story_owner = db.get(User, story.user_id)
@@ -1764,6 +2226,7 @@ class StoryService:
             sent = StoryService._send_story_message(
                 db, current_user.id, story, MESSAGE_KIND_STORY_REACTION, emoji
             )
+          
             if sent:
                 StoryService._notify_story_owner(
                     db,

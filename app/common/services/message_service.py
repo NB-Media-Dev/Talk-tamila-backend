@@ -1,3 +1,6 @@
+
+"""Direct messaging: inbox, 1:1 threads, read receipts, reactions, unsend, delete
+chat, mark read/unread, call logging, and people search."""
 import json
 from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, List, Optional, Set
@@ -18,8 +21,8 @@ from app.common.models.messaging import (
     MessageRequestAccept,
 )
 from app.common.models.moderation import ChatMute, UserBlock, UserReport
-from app.common.models.social import Follow
-from app.common.models.story import Story
+from app.common.models.social import Follow, Notification
+from app.common.models.story import Story, StoryReply
 from app.common.models.user import User
 
 
@@ -527,6 +530,24 @@ class MessageService:
         db.add(msg)
         db.commit()
         db.refresh(msg)
+
+        # Create a notification so the receiver sees it in the bell panel.
+        try:
+            snippet = (body or "").strip()[:80]
+            sender_name = me.username or me.full_name or f"User {me.user_id}"
+            notif = Notification(
+                user_id=other_id,
+                type="new_message",
+                message=f"{sender_name} sent you a message: {snippet}",
+                reference_id=msg.id,
+                is_read=False,
+                created_at=_utc_now_naive(),
+            )
+            db.add(notif)
+            db.commit()
+        except Exception:
+            db.rollback()  # notification failure must never break the message
+
         return _message_dict(msg, me.user_id)
 
     # ---------- unsend ----------
@@ -540,6 +561,36 @@ class MessageService:
 
         # was created without ON DELETE CASCADE.
         db.execute(delete(MessageReaction).where(MessageReaction.message_id == message_id))
+
+        # Delete any notifications tied directly to this message
+        db.execute(
+            delete(Notification).where(
+                Notification.reference_id == message_id,
+                Notification.type.in_(["new_message", "story_reply", "story_react", "message_react"])
+            )
+        )
+
+        # If this message was a story reply or story reaction, also clean up story-level notifications
+        if msg.story_id:
+            username = me.username or ""
+            if username:
+                db.execute(
+                    delete(Notification).where(
+                        Notification.user_id == msg.receiver_id,
+                        Notification.reference_id == msg.story_id,
+                        Notification.type.in_(["story_reply", "story_react"]),
+                        Notification.message.like(f"{username}%")
+                    )
+                )
+            if msg.kind == MESSAGE_KIND_STORY_REPLY:
+                db.execute(
+                    delete(StoryReply).where(
+                        StoryReply.story_id == msg.story_id,
+                        StoryReply.user_id == me.user_id,
+                        StoryReply.text == msg.body
+                    )
+                )
+
         db.delete(msg)
         db.commit()
         return {"success": True, "message_id": message_id}
@@ -749,7 +800,7 @@ class MessageService:
             db.commit()
         return MessageService._reaction_payload(db, message_id)
 
-    # ---------- people (See all / start new chat) ----------
+
     @staticmethod
     def search_people(
         db: Session, me: User, q: str = "", limit: int = 30, offset: int = 0

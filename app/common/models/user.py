@@ -105,4 +105,4 @@ class User(Base):
         self._ensure_profile().location = value
 
     profile: Mapped[Optional["Profile"]] = relationship("Profile", back_populates="user", uselist=False, cascade="all, delete-orphan")
-    stories: Mapped[list["Story"]] = relationship("Story", back_populates="owner", cascade="all, delete-orphan")
+    stories: Mapped[list["Story"]] = relationship("Story", back_populates="owner", foreign_keys="[Story.user_id]", cascade="all, delete-orphan")

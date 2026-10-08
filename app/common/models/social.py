@@ -32,6 +32,7 @@ class Profile(Base):
         nullable=False,
     )
     username: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    
     profile_pic_url: Mapped[str | None] = mapped_column(
         Text().with_variant(mysql.LONGTEXT(), "mysql"), nullable=True
     )
@@ -73,7 +74,7 @@ class Follow(Base):
         UniqueConstraint("follower_id", "following_id", name="uq_follows_follower_following"),
     )
 
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)   # <-- this line
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)  
     follower_id: Mapped[int] = mapped_column(
         ForeignKey("users.user_id", ondelete="CASCADE"),
         nullable=False,
