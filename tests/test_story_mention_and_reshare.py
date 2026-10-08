@@ -37,6 +37,8 @@ def test_story_mention_and_reshare_chain(client: TestClient, db_session: Session
     -> A receives: 'D shared your story' (STORY_SHARED)
     -> B and C do NOT receive STORY_SHARED
     """
+    # 1. Setup Users A, B, C, D
+    # Seed users: 2=Arjun (A), 3=Priya (B), 4=Karthik (C), 5=Swathi (D)
     user_a = db_session.get(User, 2)
     user_b = db_session.get(User, 3)
     user_c = db_session.get(User, 4)

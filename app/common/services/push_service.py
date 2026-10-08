@@ -61,7 +61,6 @@ def _vapid_subject() -> str:
     return "mailto:admin@talktamila.com"
 
 def _messages_url(role: Optional[str], sender_id: int) -> str:
-    """Same folders the website uses: each role has its own messages page."""
     role = str(getattr(role, "value", role) or "").lower()
     if role == "influencer":
         base = "/influencer/messages"
@@ -84,8 +83,6 @@ def _preview(kind: str, body: str) -> str:
 class PushService:
     @staticmethod
     def subscribe(db: Session, user: User, endpoint: str, p256dh: str, auth: str) -> None:
-        """Remember this device for this user. If the same browser was used by someone
-        else before, it now belongs to the person who is logged in."""
         existing = db.execute(
             select(PushSubscription).where(PushSubscription.endpoint == endpoint)
         ).scalar_one_or_none()
@@ -111,18 +108,12 @@ class PushService:
 
     @staticmethod
     def unsubscribe(db: Session, endpoint: str) -> bool:
-        """Stop notifications for one device (used on logout)."""
         result = db.execute(delete(PushSubscription).where(PushSubscription.endpoint == endpoint))
         db.commit()
         return bool(result.rowcount)
 
     @staticmethod
     def notify_new_message(message_id: int, exclude_endpoint: Optional[str] = None) -> None:
-        """Runs in the background right after a message was saved. Never raises: a
-        notification problem must never break sending a chat message.
-
-        `exclude_endpoint` is the sender's own browser. It is never notified about the
-        sender's own message, even if that browser is registered under the receiver."""
         if not is_configured():
             logger.warning(
                 "Push skipped for message %s: VAPID_PUBLIC_KEY / VAPID_PRIVATE_KEY are not set on this server",

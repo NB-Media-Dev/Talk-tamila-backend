@@ -1,4 +1,3 @@
-"""Another person's public profile (the Instagram-style "visit profile" page)."""
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import func
 from sqlalchemy.orm import Session
@@ -16,10 +15,7 @@ def get_public_profile(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> dict:
-    """Public details of one person plus how they relate to me.
-
-    Never includes email, phone number or date of birth.
-    """
+    """Public details of one person plus how they relate to me."""
     term = username.strip().lstrip("@")
     user = (
         db.query(User)
@@ -28,7 +24,6 @@ def get_public_profile(
     )
     if user is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "User not found")
-
 
     followers = db.query(Follow).filter(Follow.following_id == user.user_id).count()
     following = db.query(Follow).filter(Follow.follower_id == user.user_id).count()

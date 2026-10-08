@@ -1,17 +1,3 @@
-"""Settings + follow-list endpoints (names/avatars included).
-
-Self-contained on purpose: it only depends on models and core dependencies,
-so it works no matter what StoryService currently contains.
-
-Final URLs (API prefix /api/v1 is added by main.py):
-    GET    /api/v1/stories/settings/muted
-    DELETE /api/v1/stories/settings/muted/{user_id}
-    GET    /api/v1/stories/settings/close-friends
-    POST   /api/v1/stories/settings/close-friends/{friend_id}
-    DELETE /api/v1/stories/settings/close-friends/{friend_id}
-    GET    /api/v1/stories/settings/followers/{user_id}
-    GET    /api/v1/stories/settings/following/{user_id}
-"""
 from typing import List, Set
 
 from fastapi import APIRouter, Depends, HTTPException, Query

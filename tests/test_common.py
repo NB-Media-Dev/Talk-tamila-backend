@@ -7,17 +7,7 @@ def test_self_and_others_stories_flow(
     admin_auth_headers: dict,
     db_session,
 ):
-    """Thorough validation of Instagram Stories concept:
-    - Creator uploads their own story
-    - Creator views their own story (self story: GET /api/stories/my and is_my_story==True in feed)
-    - Admin (other user/role) views creator's story (GET /api/stories and GET /api/stories/{id})
-    - Admin records view (POST /api/stories/{id}/view)
-    - Admin likes and unlikes story (POST & DELETE /api/stories/{id}/like)
-    - Admin sends reply/comment (POST /api/stories/{id}/comments and GET /api/stories/{id}/comments)
-    - Creator inspects viewers and likers activity (GET /api/stories/{id}/activity)
-    - Admin (non-author) is forbidden from deleting creator's story (DELETE -> 403)
-    - Creator (author) deletes their own story (DELETE -> 204)
-    """
+    # 1. Creator uploads a story
     story_payload = {
         "media_url": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
         "media_type": "image",
@@ -175,13 +165,6 @@ def test_unique_story_view_tracking_per_user(
     influencer_auth_headers: dict,
     db_session,
 ):
-    """Verify story view is counted only once per user for each story:
-    - User A views Story X (1st time) -> views_count = 1, 1 DB row
-    - User A views Story X (2nd & 3rd time) -> views_count = 1, still 1 DB row
-    - User B views Story X (1st time) -> views_count = 2, 2 DB rows
-    - User B views Story X (2nd time) -> views_count = 2, still 2 DB rows
-    - User A views Story Y (1st time) -> Story Y views_count = 1
-    """
     from app.common.models.story import StoryView
 
     story_x_payload = {

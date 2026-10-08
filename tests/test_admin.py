@@ -49,7 +49,7 @@ def test_admin_story_management(client: TestClient, admin_auth_headers: dict, cr
     assert my_stats.status_code == 200
 
 def test_admin_creates_public_story(client: TestClient, admin_auth_headers: dict):
-    """Admin stories are strictly and always PUBLIC broadcast stories."""
+    # 1. Admin creates story via /api/admin/stories
     admin_post = client.post(
         "/api/admin/stories",
         json={"content": "Official Announcement from Admin"},

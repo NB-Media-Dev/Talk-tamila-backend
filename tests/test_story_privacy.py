@@ -31,7 +31,7 @@ def clean_social_relations(db_session):
     db_session.commit()
 
 def test_create_story_privacy_validation(client: TestClient, user1_headers: dict):
-    """Test audience validation: must accept only PUBLIC, FOLLOWERS, CLOSE_FRIENDS."""
+    # 1. Valid PUBLIC
     resp = client.post(
         "/api/stories",
         json={"content": "Public Story", "audience": "PUBLIC"},
@@ -68,7 +68,6 @@ def test_create_story_privacy_validation(client: TestClient, user1_headers: dict
     assert resp.status_code == 422
 
 def test_author_id_cannot_be_manipulated(client: TestClient, user1_headers: dict):
-    """Client cannot spoof author_id / user_id by passing it in request body."""
     resp = client.post(
         "/api/stories",
         json={
@@ -85,7 +84,6 @@ def test_author_id_cannot_be_manipulated(client: TestClient, user1_headers: dict
     assert data["user_id"] == 2
 
 def test_public_story_visibility(client: TestClient, user1_headers: dict, user2_headers: dict):
-    """PUBLIC story created by user1 is visible to user2 in feed and by ID."""
     resp = client.post(
         "/api/stories",
         json={"content": "Open to everyone", "audience": "PUBLIC"},
@@ -104,7 +102,7 @@ def test_public_story_visibility(client: TestClient, user1_headers: dict, user2_
     assert detail_resp.json()["id"] == story_id
 
 def test_author_always_sees_own_stories(client: TestClient, user1_headers: dict):
-    """Author can always see their own stories regardless of audience."""
+    # Create one of each audience type
     resp_pub = client.post(
         "/api/stories",
         json={"content": "My Public Story", "audience": "PUBLIC"},
@@ -140,10 +138,7 @@ def test_followers_story_visibility(
     user3_headers: dict,
     db_session,
 ):
-    """FOLLOWERS story:
-    - Visible only when user actively follows author.
-    - Not visible when user does not follow author.
-    """
+    # User 1 creates FOLLOWERS story
     resp = client.post(
         "/api/stories",
         json={"content": "Only for my followers", "audience": "FOLLOWERS"},
@@ -180,10 +175,7 @@ def test_close_friends_story_visibility(
     user3_headers: dict,
     db_session,
 ):
-    """CLOSE_FRIENDS story:
-    - Visible only when author explicitly added user to close friends.
-    - Not visible when author has not added user.
-    """
+    # User 1 creates CLOSE_FRIENDS story
     resp = client.post(
         "/api/stories",
         json={"content": "Secret close friends only", "audience": "CLOSE_FRIENDS"},
@@ -218,7 +210,7 @@ def test_close_friends_story_visibility(
     assert story_id not in [s["id"] for s in feed_resp2_removed.json()]
 
 def test_feed_pagination(client: TestClient, user1_headers: dict):
-    """Test pagination with limit and offset."""
+    # Create multiple public stories
     for i in range(5):
         client.post(
             "/api/stories",
@@ -252,7 +244,7 @@ def test_change_audience_dynamically_without_affecting_other_stories(
     user3_headers: dict,
     db_session,
 ):
-    """Ensure changing story audience via PATCH works dynamically and does not affect other stories."""
+    # User 1 creates Story A (PUBLIC) and Story B (FOLLOWERS)
     resp_a = client.post(
         "/api/stories",
         json={"content": "Story A", "audience": "PUBLIC"},
@@ -330,7 +322,7 @@ def test_active_groups_audience_filtering(
     user2_headers: dict,
     db_session,
 ):
-    """Ensure GET /api/stories (active groups) properly filters slides by viewer audience permission."""
+    # User 1 creates 3 stories: PUBLIC, FOLLOWERS, CLOSE_FRIENDS
     s1 = client.post("/api/stories", json={"content": "Grp Pub", "audience": "PUBLIC"}, headers=user1_headers).json()["id"]
     s2 = client.post("/api/stories", json={"content": "Grp Fol", "audience": "FOLLOWERS"}, headers=user1_headers).json()["id"]
     s3 = client.post("/api/stories", json={"content": "Grp CF", "audience": "CLOSE_FRIENDS"}, headers=user1_headers).json()["id"]
@@ -383,7 +375,6 @@ def test_get_user_stories_audience_filtering(
     user2_headers: dict,
     db_session,
 ):
-    """Ensure GET /api/stories/user/{user_id} filters stories by audience for the requesting user."""
     s1 = client.post("/api/stories", json={"content": "U Pub", "audience": "PUBLIC"}, headers=user1_headers).json()["id"]
     s2 = client.post("/api/stories", json={"content": "U Fol", "audience": "FOLLOWERS"}, headers=user1_headers).json()["id"]
     s3 = client.post("/api/stories", json={"content": "U CF", "audience": "CLOSE_FRIENDS"}, headers=user1_headers).json()["id"]
@@ -415,7 +406,6 @@ def test_admin_can_view_all_audiences(
     admin_headers: dict,
     db_session,
 ):
-    """Admin has full visibility across all audience types."""
     s1 = client.post("/api/stories", json={"content": "Adm Pub", "audience": "PUBLIC"}, headers=user1_headers).json()["id"]
     s2 = client.post("/api/stories", json={"content": "Adm Fol", "audience": "FOLLOWERS"}, headers=user1_headers).json()["id"]
     s3 = client.post("/api/stories", json={"content": "Adm CF", "audience": "CLOSE_FRIENDS"}, headers=user1_headers).json()["id"]
@@ -441,7 +431,6 @@ def test_unauthenticated_user_access(
     user1_headers: dict,
     db_session,
 ):
-    """Unauthenticated users can view PUBLIC stories, but are blocked (403) from private stories."""
     s1 = client.post("/api/stories", json={"content": "Open Pub", "audience": "PUBLIC"}, headers=user1_headers).json()["id"]
     s2 = client.post("/api/stories", json={"content": "Closed Fol", "audience": "FOLLOWERS"}, headers=user1_headers).json()["id"]
     s3 = client.post("/api/stories", json={"content": "Closed CF", "audience": "CLOSE_FRIENDS"}, headers=user1_headers).json()["id"]

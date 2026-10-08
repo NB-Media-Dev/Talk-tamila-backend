@@ -11,7 +11,6 @@ def _utc_now_naive() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
-
 MESSAGE_KIND_TEXT = "text"
 MESSAGE_KIND_STORY_REPLY = "story_reply"
 MESSAGE_KIND_STORY_REACTION = "story_reaction"
@@ -19,7 +18,6 @@ MESSAGE_KIND_CALL = "call"
 
 
 class DirectMessage(Base):
-    """One 1:1 chat message. A "conversation" is just the pair (sender, receiver)."""
 
     __tablename__ = "direct_messages"
     __table_args__ = (
@@ -48,8 +46,6 @@ class DirectMessage(Base):
 
 
 class MessageReaction(Base):
-    """An emoji reaction to a direct message. One reaction per person per message:
-    reacting again with a different emoji replaces the old one."""
 
     __tablename__ = "message_reactions"
     __table_args__ = (
@@ -68,12 +64,6 @@ class MessageReaction(Base):
 
 
 class ChatState(Base):
-    """Per-viewer state for a 1:1 chat - Instagram-style "delete chat" and "mark as
-    unread" without ever touching the other person's copy of the conversation.
-
-    This is a brand-new table, so it's created automatically by
-    Base.metadata.create_all() on startup - no ALTER TABLE migration needed.
-    """
 
     __tablename__ = "chat_state"
     __table_args__ = (
@@ -98,15 +88,6 @@ class ChatState(Base):
 
 
 class MessageRequestAccept(Base):
-    """Instagram-style "message requests".
-
-    Two people who follow each other chat directly. When someone who is NOT a mutual
-    follow messages you, the chat lands in your Requests tab. Tapping Accept adds one
-    row here (user_id = you, partner_id = them) and the chat moves to your main inbox.
-
-    This is a brand-new table, so Base.metadata.create_all() creates it on startup -
-    no ALTER TABLE migration needed.
-    """
 
     __tablename__ = "message_request_accepts"
     __table_args__ = (
@@ -125,18 +106,6 @@ class MessageRequestAccept(Base):
 
 
 class PushSubscription(Base):
-    """One browser/phone that agreed to receive message notifications for a user.
-
-    Instagram-style notifications: when someone sends you a message, the server pushes
-    a small notification to every device listed here, even if the website is closed.
-
-    `endpoint` is a long private URL the browser's push service gave us; it is unique
-    per browser. If a different person logs in on the same browser, the row simply
-    moves to them (see PushService.subscribe).
-
-    This is a brand-new table, so Base.metadata.create_all() creates it on startup -
-    no ALTER TABLE migration needed.
-    """
 
     __tablename__ = "push_subscriptions"
     __table_args__ = (

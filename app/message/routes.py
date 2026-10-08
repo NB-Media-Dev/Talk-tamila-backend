@@ -218,13 +218,7 @@ def push_subscribe(
 
 @router.post("/push/unsubscribe")
 async def push_unsubscribe(request: Request, db: Session = Depends(get_db)) -> dict:
-    """Stop notifications for one browser (called when the person logs out).
-
-    Deliberately needs no login token: the website calls it with navigator.sendBeacon
-    at the moment of logout, when the token is already being thrown away. The
-    `endpoint` is a long private address only that browser and this server know, so it
-    works like a password for that one device and nothing else.
-    """
+    """Stop notifications for one browser (called when the person logs out)."""
     try:
         raw = await request.body()
         data = PushUnsubscribeRequest(**json.loads(raw or b"{}"))

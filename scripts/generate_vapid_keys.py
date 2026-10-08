@@ -1,13 +1,3 @@
-"""Creates the two keys needed for message notifications (Web Push).
-
-Run it ONCE, from the talk-tamila-backend folder:
-
-    python scripts/generate_vapid_keys.py
-
-Then copy the two printed lines into your environment variables
-(your local .env file AND the Render "Environment" tab).
-Keep the private key secret. Never share it or commit it to git.
-"""
 import base64
 
 from cryptography.hazmat.primitives import serialization

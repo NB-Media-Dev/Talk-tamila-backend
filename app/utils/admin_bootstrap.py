@@ -1,15 +1,3 @@
-"""Makes sure the built-in admin account always exists.
-
-Runs on every backend start (in every environment, including production), so a fresh
-database - for example a new Aiven database - always gets its admin login.
-
-  username: admin
-  email:    admin@talktamila.com
-  password: admin123   (stored hashed; only used when the account is first created)
-
-The password is only set when the account is CREATED. If you change the admin password
-later (Settings -> Edit profile & change password), it is never reset back on restart.
-"""
 from datetime import date
 
 from sqlalchemy import or_

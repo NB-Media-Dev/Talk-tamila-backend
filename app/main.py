@@ -52,6 +52,7 @@ from app.freelancer.routes import router as freelancer_router
 from app.influencer.routes import router as influencer_router
 from app.message.calls import router as calls_router
 from app.message.routes import router as message_router
+from app.post.routes import router as post_router
 from app.profile.routes import router as profile_router
 from app.post.routes import router as post_router
 from app.superadmin.routes import router as superadmin_router
@@ -126,6 +127,7 @@ async def lifespan(app: FastAPI):
                 "ALTER TABLE story_mentions ADD COLUMN x FLOAT NULL",
                 "ALTER TABLE story_mentions ADD COLUMN y FLOAT NULL",
                 "ALTER TABLE story_mentions ADD COLUMN created_at DATETIME DEFAULT CURRENT_TIMESTAMP",
+<<<<<<< HEAD
                 "ALTER TABLE posts ADD COLUMN username VARCHAR(100) NULL",
                 "ALTER TABLE posts ADD COLUMN title VARCHAR(255) NULL",
                 "ALTER TABLE posts ADD COLUMN caption LONGTEXT NULL",
@@ -200,6 +202,8 @@ async def lifespan(app: FastAPI):
                 "created_at DATETIME DEFAULT CURRENT_TIMESTAMP, "
                 "INDEX idx_pv_post (post_id)"
                 ")",
+=======
+>>>>>>> temp-branch
             ]:
                 try:
                     conn.execute(text(stmt))
@@ -663,8 +667,15 @@ def reset_password_endpoint(payload: ResetPasswordRequest, db: Session = Depends
     AuthService.reset_password_with_otp(db, payload.identifier, payload.otp, payload.new_password)
     return {"success": True, "message": "Password reset successfully."}
 
+<<<<<<< HEAD
 notification_router = APIRouter(prefix="/notifications", tags=["Notifications"])
 
+=======
+
+notification_router = APIRouter(prefix="/notifications", tags=["Notifications"])
+
+
+>>>>>>> temp-branch
 @notification_router.get("", summary="Get current user's notifications")
 def get_notifications(
     limit: int = Query(default=20, ge=1, le=100),
@@ -673,6 +684,10 @@ def get_notifications(
 ):
     return NotificationService.get_user_notifications(current_user.user_id, db, limit)
 
+<<<<<<< HEAD
+=======
+
+>>>>>>> temp-branch
 @notification_router.patch("/{notification_id}/read", summary="Mark a notification as read")
 def mark_notification_read(
     notification_id: int,
@@ -689,6 +704,10 @@ def mark_notification_read(
     db.commit()
     return {"success": True}
 
+<<<<<<< HEAD
+=======
+
+>>>>>>> temp-branch
 @notification_router.patch("/read-all", summary="Mark all notifications as read")
 def mark_all_notifications_read(
     current_user: User = Depends(get_current_user),
@@ -701,6 +720,10 @@ def mark_all_notifications_read(
     db.commit()
     return {"success": True}
 
+<<<<<<< HEAD
+=======
+
+>>>>>>> temp-branch
 @notification_router.delete("/{notification_id}", summary="Delete a notification")
 def delete_notification(
     notification_id: int,
@@ -724,6 +747,7 @@ routers = [
     post_router,
     message_router,
     calls_router,
+    post_router,
     profile_router,
     admin_router,
     influencer_router,

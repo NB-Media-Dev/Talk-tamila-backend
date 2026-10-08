@@ -1,4 +1,3 @@
-"""Story replies/reactions arrive as chat messages, and messages can be reacted to."""
 from datetime import timedelta
 
 import pytest

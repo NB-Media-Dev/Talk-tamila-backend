@@ -13,6 +13,25 @@ from app.common.models.social import Notification, Follow
 from app.common.models.story import Story, StoryLike
 from app.common.models.user import User
 from app.common.schemas.social import NotificationResponse
+from app.common.models.messaging import DirectMessage, MESSAGE_KIND_CALL, ChatState
+from app.common.models.story import Story, StoryLike
+from app.common.models.user import User
+
+
+def _utc_now_iso() -> str:
+    return f"{datetime.now(timezone.utc).replace(tzinfo=None).isoformat()}Z"
+
+
+def _iso(dt: Optional[datetime]) -> str:
+    if not dt:
+        return ""
+    s = dt.isoformat()
+    return s if s.endswith("Z") or ("+" in s or "-" in s[10:]) else f"{s}Z"
+
+
+def _uname(msg: Optional[str]) -> Optional[str]:
+    m = re.match(r"^([A-Za-z0-9_]+)", (msg or "").strip())
+    return m.group(1).lower() if m else None
 
 
 def _utc_now_iso() -> str:
@@ -129,6 +148,47 @@ class NotificationService:
                 actor_username=actor.username if actor else None,
             ))
 
+    
+        unread_dms = (
+            db.query(DirectMessage)
+            .filter(DirectMessage.receiver_id == user_id, DirectMessage.read_at.is_(None), DirectMessage.kind != MESSAGE_KIND_CALL)
+            .order_by(desc(DirectMessage.id))
+            .limit(50)
+            .all()
+        )
 
+        sender_ids = {m.sender_id for m in unread_dms}
+        chat_states = {r.partner_id: r.cleared_before_id for r in db.execute(select(ChatState).where(ChatState.user_id == user_id, ChatState.partner_id.in_(list(sender_ids)))).scalars().all()} if sender_ids else {}
+        dm_users = {u.user_id: u for u in db.execute(select(User).where(User.user_id.in_(list(sender_ids)))).scalars().all()} if sender_ids else {}
+
+        for dm in unread_dms:
+            if dm.id <= chat_states.get(dm.sender_id, 0) or dm.id in covered_dm_ids:
+                continue
+
+            sender = dm_users.get(dm.sender_id)
+            sname = (sender.username or sender.full_name or f"User {dm.sender_id}") if sender else f"User {dm.sender_id}"
+            snip = (dm.body or "").strip()[:80]
+            kind = dm.kind or "text"
+
+            if kind == "story_reply":
+                msg_text, notif_type, ref_id = f"{sname} replied to your story: {snip}", "story_reply", dm.story_id or dm.id
+            elif kind == "story_reaction":
+                msg_text, notif_type, ref_id = f"{sname} reacted to your story: {snip}", "story_react", dm.story_id or dm.id
+            else:
+                msg_text, notif_type, ref_id = f"{sname} sent you a message: {snip}", "new_message", dm.id
+
+            result.append(NotificationResponse(
+                id=-(dm.id),
+                user_id=user_id,
+                type=notif_type,
+                message=msg_text,
+                reference_id=ref_id,
+                is_read=False,
+                created_at=_iso(dm.created_at) or _utc_now_iso(),
+                actor_id=dm.sender_id,
+                actor_username=sender.username if sender else None,
+            ))
+
+       
         result.sort(key=lambda n: n.created_at, reverse=True)
         return result[:limit]

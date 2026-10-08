@@ -258,6 +258,124 @@ def is_story_root_active(s: Story, db: Session, now_naive: datetime) -> bool:
         return False
     return True
 
+def extract_mentioned_usernames(text: Optional[str]) -> List[str]:
+    if not text:
+        return []
+    matches = re.findall(r"@([a-zA-Z0-9_]+)", text)
+    seen = set()
+    result = []
+    for m in matches:
+        low = m.lower()
+        if low not in seen:
+            seen.add(low)
+            result.append(m)
+    return result
+
+
+def process_and_create_mentions(
+    db: Session,
+    story: Story,
+    mentions_payload: Optional[List[Any]],
+    caption: Optional[str],
+    current_user: User,
+) -> List[StoryMention]:
+    candidate_user_ids = set()
+    candidate_usernames = set()
+    coords_by_uid = {}
+    coords_by_uname = {}
+
+    if mentions_payload:
+        for m in mentions_payload:
+            uid = getattr(m, "user_id", None) if hasattr(m, "user_id") else (m.get("user_id") if isinstance(m, dict) else None)
+            uname = getattr(m, "username", None) if hasattr(m, "username") else (m.get("username") if isinstance(m, dict) else None)
+            x = getattr(m, "x", None) if hasattr(m, "x") else (m.get("x") if isinstance(m, dict) else None)
+            y = getattr(m, "y", None) if hasattr(m, "y") else (m.get("y") if isinstance(m, dict) else None)
+            if uid:
+                candidate_user_ids.add(int(uid))
+                coords_by_uid[int(uid)] = (x, y)
+            if uname:
+                clean_uname = uname.strip().lstrip("@").lower()
+                candidate_usernames.add(clean_uname)
+                coords_by_uname[clean_uname] = (x, y)
+
+    caption_unames = extract_mentioned_usernames(caption)
+    for u in caption_unames:
+        candidate_usernames.add(u.strip().lstrip("@").lower())
+
+    if not candidate_user_ids and not candidate_usernames:
+        return []
+
+    query_conds = []
+    if candidate_user_ids:
+        query_conds.append(User.user_id.in_(list(candidate_user_ids)))
+    if candidate_usernames:
+        query_conds.append(func.lower(User.username).in_(list(candidate_usernames)))
+
+    target_users = db.query(User).filter(or_(*query_conds), User.is_active.is_(True)).all()
+    created_mentions = []
+
+    for target in target_users:
+        # Check blocking
+        is_blocked = db.query(UserBlock).filter(
+            or_(
+                and_(UserBlock.blocker_id == current_user.id, UserBlock.blocked_id == target.user_id),
+                and_(UserBlock.blocker_id == target.user_id, UserBlock.blocked_id == current_user.id),
+            )
+        ).first() is not None
+
+        if is_blocked:
+            if mentions_payload:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Cannot mention @{target.username}: user is blocked."
+                )
+            continue
+
+        x, y = coords_by_uid.get(target.user_id, coords_by_uname.get((target.username or "").lower(), (None, None)))
+
+        existing = db.query(StoryMention).filter(
+            StoryMention.story_id == story.story_id,
+            StoryMention.mentioned_user_id == target.user_id,
+        ).first()
+
+        if not existing:
+            mention = StoryMention(
+                story_id=story.story_id,
+                mentioned_user_id=target.user_id,
+                created_by_user_id=current_user.id,
+                owner_user_id=current_user.id,
+                x=x,
+                y=y,
+                created_at=make_naive(utc_now()),
+            )
+            db.add(mention)
+            created_mentions.append(mention)
+
+            # Send Notification ONLY to mentioned user (STORY_MENTION)
+            if target.user_id != current_user.id:
+                notif = Notification(
+                    user_id=target.user_id,
+                    type="STORY_MENTION",
+                    message=f"{current_user.username} mentioned you in their story",
+                    reference_id=story.story_id,
+                    is_read=False,
+                    created_at=make_naive(utc_now()),
+                )
+                db.add(notif)
+
+    db.commit()
+    return created_mentions
+
+
+def is_story_root_active(s: Story, db: Session, now_naive: datetime) -> bool:
+    if not s.original_story_id or s.original_story_id == s.story_id:
+        return True
+    root = s.original_story or db.get(Story, s.original_story_id)
+    if not root or root.is_deleted or (root.expires_at and root.expires_at <= now_naive):
+        return False
+    return True
+
+
 def build_story_item(
     story: Story,
     current_user_id: Optional[int],
@@ -462,7 +580,6 @@ def story_to_slide(story_item: StoryItemResponse, creator_name: str) -> StorySli
 class StoryService:
     @staticmethod
     def create_story(payload, current_user: User, db: Session) -> StoryItemResponse:
-        """Create a story from a JSON payload (media_url or gradient already provided)."""
         media_url = getattr(payload, "media_url", None)
         caption = getattr(payload, "caption", None) or getattr(payload, "content", None)
         
@@ -1276,8 +1393,6 @@ class StoryService:
 
     @staticmethod
     def _send_story_message(db: Session, sender_id: int, story: Story, kind: str, body: str):
-        """Best effort: the reply/reaction itself is already saved, so a failure to
-        mirror it into chat is logged instead of failing the request."""
         try:
             return MessageService.send_story_message(
                 db, sender_id, story.user_id, story.story_id, kind, body
