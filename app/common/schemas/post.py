@@ -50,7 +50,10 @@ class PostOut(BaseModel):
     status: str = "published"
     content: Optional[str] = None
     media_type: Optional[str] = None
+    # First picture / the video. Kept so older screens keep working.
     media_url: Optional[str] = None
+    # Every slide of a carousel, in order (just one entry for a normal photo post).
+    media_urls: List[str] = []
     gif_url: Optional[str] = None
     poll: Optional[PollOut] = None
     # All timestamps are ISO-8601 in UTC and end with "Z".

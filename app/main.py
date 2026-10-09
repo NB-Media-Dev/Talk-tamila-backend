@@ -25,7 +25,7 @@ from app.story.routes import router as story_router
 from app.story.settings_routes import router as story_settings_router
 from app.utils.admin_bootstrap import ensure_admin_user
 from app.utils.db_migrations import apply_startup_migrations
-from app.utils.seed import seed_db_data
+from app.utils.seed import seed_db_data, seed_demo_posts
 
 logger = logging.getLogger("talktamila.main")
 
@@ -41,6 +41,15 @@ def _prepare_database() -> None:
 
     with SessionLocal() as db:
         ensure_admin_user(db)
+
+    # A few example posts so the feed is not empty the first time (development only, and
+    # only while there are no posts at all). Set SEED_DEMO_POSTS=false in settings to skip it.
+    if not settings.is_production and getattr(settings, "SEED_DEMO_POSTS", True):
+        try:
+            with SessionLocal() as db:
+                seed_demo_posts(db)
+        except Exception:
+            logger.exception("Could not add the example posts")
 
 
 @asynccontextmanager

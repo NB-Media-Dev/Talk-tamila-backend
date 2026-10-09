@@ -15,12 +15,13 @@ from app.common.models.post import (
     STATUS_PUBLISHED,
     STATUS_SCHEDULED,
     Post,
+    PostMedia,
     PostPollOption,
     PostPollVote,
     PostSave,
     _utc_now,
 )
-from app.common.models.social import Profile
+from app.common.models.social import Follow, Profile
 from app.common.models.user import User
 from app.common.schemas.post import (
     FeedResponse,
@@ -46,6 +47,11 @@ POST_CREATOR_ROLES = {"admin"}
 POST_TYPES = {"text", "image", "video", "gif", "poll"}
 
 MAX_CONTENT_LENGTH = 5000
+# A carousel post holds up to this many pictures (Instagram allows 10).
+MAX_CAROUSEL_ITEMS = 10
+# Posts from people you do not follow only show in your feed for this long. Posts from
+# people you follow (and your own) always show.
+FEED_DISCOVER_DAYS = 14
 MAX_IMAGE_BYTES = 5 * 1024 * 1024
 MAX_VIDEO_BYTES = 25 * 1024 * 1024
 POLL_MIN_OPTIONS = 2
@@ -269,6 +275,30 @@ class PostService:
         post.media_data = media_bytes
 
     @staticmethod
+    def _apply_extra_media(post: Post, extra_media: List[bytes]) -> None:
+        """Add slides 2, 3, ... to a carousel post. Only pictures are allowed."""
+        if post.post_type != "image":
+            raise _bad("Only photo posts can have more than one picture.")
+        if not post.media_mime:
+            raise _bad("Choose the first picture before adding more.")
+        if 1 + len(extra_media) > MAX_CAROUSEL_ITEMS:
+            raise _bad(f"A carousel can have at most {MAX_CAROUSEL_ITEMS} pictures.")
+        for index, data in enumerate(extra_media, start=1):
+            if not data:
+                raise _bad("One of the pictures was empty. Please choose it again.")
+            mime = sniff_mime(data)
+            if mime not in IMAGE_MIMES:
+                raise _bad("Every picture in a carousel must be a JPG, PNG, WEBP or GIF.")
+            if len(data) > MAX_IMAGE_BYTES:
+                raise _bad(
+                    f"Picture {index + 1} is too large. Maximum size is "
+                    f"{MAX_IMAGE_BYTES // (1024 * 1024)} MB each."
+                )
+            post.extra_media.append(
+                PostMedia(position=index, media_mime=mime, media_size=len(data), media_data=data)
+            )
+
+    @staticmethod
     def _apply_gif(post: Post, gif_url: Optional[str]) -> None:
         url = (gif_url or "").strip()
         host = (urlparse(url).hostname or "").lower()
@@ -308,8 +338,13 @@ class PostService:
         music: Optional[dict] = None,
         comments_disabled: bool = False,
         hide_like_count: bool = False,
+        extra_media: Optional[List[bytes]] = None,
     ) -> FeedResponse:
-        """Create a post. `scheduled_at` must be naive UTC (see parse_scheduled_at)."""
+        """Create a post. `scheduled_at` must be naive UTC (see parse_scheduled_at).
+
+        `extra_media` holds pictures 2, 3, ... of a carousel (the first picture is
+        `media_bytes`).
+        """
         PostService.assert_can_create(user)
 
         post_type = (post_type or "").strip().lower()
@@ -330,8 +365,12 @@ class PostService:
 
         if post_type == "text" and not text:
             raise _bad("Write something before posting.")
+        if extra_media and post_type != "image":
+            raise _bad("Only photo posts can have more than one picture.")
         if post_type in ("image", "video"):
             PostService._apply_media(post, post_type, media_bytes)
+            if extra_media:
+                PostService._apply_extra_media(post, extra_media)
         elif post_type == "gif":
             PostService._apply_gif(post, gif_url)
         elif post_type == "poll":
@@ -375,6 +414,29 @@ class PostService:
     def get_feed(db: Session, viewer: User, limit: int, before_id: Optional[int]) -> FeedResponse:
         """Published posts, newest first by publish time. Scheduled posts never appear."""
         PostService._publish_due_safely(db)
+        rows = PostService._feed_rows(db, viewer, limit, before_id, discover_all=False)
+        # Ran out of recent posts (or nothing followed yet): carry on with older posts from
+        # everyone so the feed is never empty and still scrolls.
+        if not rows:
+            rows = PostService._feed_rows(db, viewer, limit, before_id, discover_all=True)
+        has_more = len(rows) > limit
+        rows = rows[:limit]
+        return PostService._build_feed(db, rows, viewer, has_more=has_more)
+
+    @staticmethod
+    def _feed_rows(
+        db: Session,
+        viewer: User,
+        limit: int,
+        before_id: Optional[int],
+        discover_all: bool,
+    ) -> List[Post]:
+        """The home feed, newest first (Instagram style).
+
+        - Your own posts and posts from people you follow always show.
+        - Posts from everyone else show while they are recent, so a refresh brings in what
+          other people posted lately. A brand new post goes to the very top.
+        """
         blocked = PostEngagementService.blocked_ids(db, viewer.user_id)
         stmt = (
             select(Post)
@@ -383,6 +445,16 @@ class PostService:
             .order_by(Post.published_at.desc(), Post.post_id.desc())
             .limit(limit + 1)
         )
+        if not discover_all:
+            followed = select(Follow.following_id).where(Follow.follower_id == viewer.user_id)
+            cutoff = _utc_now() - timedelta(days=FEED_DISCOVER_DAYS)
+            stmt = stmt.where(
+                or_(
+                    Post.user_id == viewer.user_id,
+                    Post.user_id.in_(followed),
+                    Post.published_at >= cutoff,
+                )
+            )
         if blocked:
             stmt = stmt.where(Post.user_id.not_in(blocked))
         if before_id:
@@ -400,10 +472,7 @@ class PostService:
                 )
             else:
                 stmt = stmt.where(Post.post_id < before_id)
-        rows = list(db.execute(stmt).scalars().all())
-        has_more = len(rows) > limit
-        rows = rows[:limit]
-        return PostService._build_feed(db, rows, viewer, has_more=has_more)
+        return list(db.execute(stmt).scalars().all())
 
     @staticmethod
     def get_user_posts(
@@ -635,11 +704,17 @@ class PostService:
         counts: Dict[int, int],
         mine: Dict[int, int],
         eng: dict,
+        extra_counts: Optional[Dict[int, int]] = None,
     ) -> PostOut:
         is_published = post.status == STATUS_PUBLISHED
         is_owner = post.user_id == viewer.user_id
         likes_hidden = bool(post.hide_like_count) and not is_owner
         pid = post.post_id
+        media_urls: List[str] = []
+        if post.media_mime:
+            media_urls.append(f"/api/v1/posts/{pid}/media")
+            for position in range(1, int((extra_counts or {}).get(pid, 0)) + 1):
+                media_urls.append(f"/api/v1/posts/{pid}/media/{position}")
         return PostOut(
             post_id=pid,
             author_id=post.user_id,
@@ -648,6 +723,7 @@ class PostService:
             content=post.content,
             media_type=post.media_type,
             media_url=f"/api/v1/posts/{pid}/media" if post.media_mime else None,
+            media_urls=media_urls,
             gif_url=post.gif_url,
             poll=(
                 PostService._poll_out(post, counts, mine.get(pid))
@@ -679,6 +755,19 @@ class PostService:
         )
 
     @staticmethod
+    def _extra_media_counts(db: Session, post_ids: List[int]) -> Dict[int, int]:
+        """How many extra slides (beyond the first picture) each post has."""
+        if not post_ids:
+            return {}
+        return dict(
+            db.execute(
+                select(PostMedia.post_id, func.count(PostMedia.media_id))
+                .where(PostMedia.post_id.in_(post_ids))
+                .group_by(PostMedia.post_id)
+            ).all()
+        )
+
+    @staticmethod
     def _build_feed(db: Session, posts: List[Post], viewer: User, has_more: bool) -> FeedResponse:
         poll_ids = [p.post_id for p in posts if p.post_type == "poll"]
         counts, mine = PostService._poll_data(db, poll_ids, viewer.user_id)
@@ -687,7 +776,8 @@ class PostService:
         eng = PostEngagementService.snapshot(
             db, [p.post_id for p in posts], viewer.user_id, author_ids
         )
-        items = [PostService._to_out(p, viewer, counts, mine, eng) for p in posts]
+        extra_counts = PostService._extra_media_counts(db, [p.post_id for p in posts])
+        items = [PostService._to_out(p, viewer, counts, mine, eng, extra_counts) for p in posts]
         return FeedResponse(
             items=items,
             authors=authors,
@@ -966,14 +1056,24 @@ class PostService:
     # ------------------------------------------------------------------ media
     @staticmethod
     def media_info(
-        db: Session, post_id: int, viewer: Optional[User] = None
+        db: Session, post_id: int, viewer: Optional[User] = None, position: int = 0
     ) -> Optional[Tuple[str, int, str]]:
-        """Return (mime, size, status), or None when the viewer must not see this media."""
-        row = db.execute(
-            select(Post.media_mime, Post.media_size, Post.status, Post.user_id).where(
-                Post.post_id == post_id, Post.media_mime.is_not(None)
-            )
-        ).first()
+        """Return (mime, size, status), or None when the viewer must not see this media.
+
+        `position` 0 is the first picture / the video, 1 and up are the other carousel slides.
+        """
+        if position <= 0:
+            row = db.execute(
+                select(Post.media_mime, Post.media_size, Post.status, Post.user_id).where(
+                    Post.post_id == post_id, Post.media_mime.is_not(None)
+                )
+            ).first()
+        else:
+            row = db.execute(
+                select(PostMedia.media_mime, PostMedia.media_size, Post.status, Post.user_id)
+                .join(Post, Post.post_id == PostMedia.post_id)
+                .where(PostMedia.post_id == post_id, PostMedia.position == position)
+            ).first()
         if not row or not row[1]:
             return None
         if row[2] != STATUS_PUBLISHED:
@@ -985,8 +1085,17 @@ class PostService:
         return row[0], int(row[1]), row[2]
 
     @staticmethod
-    def media_bytes(db: Session, post_id: int, start: int, length: int) -> bytes:
-        data = db.execute(
-            select(func.substr(Post.media_data, start + 1, length)).where(Post.post_id == post_id)
-        ).scalar()
+    def media_bytes(
+        db: Session, post_id: int, start: int, length: int, position: int = 0
+    ) -> bytes:
+        if position <= 0:
+            data = db.execute(
+                select(func.substr(Post.media_data, start + 1, length)).where(Post.post_id == post_id)
+            ).scalar()
+        else:
+            data = db.execute(
+                select(func.substr(PostMedia.media_data, start + 1, length)).where(
+                    PostMedia.post_id == post_id, PostMedia.position == position
+                )
+            ).scalar()
         return bytes(data or b"")

@@ -101,6 +101,14 @@ class Post(Base):
     )
 
     owner: Mapped["User"] = relationship("User", back_populates="posts", foreign_keys=[user_id])
+    # Slides 2, 3, ... of a carousel post. The first picture stays in the media_* columns
+    # above, so older code and old posts keep working.
+    extra_media: Mapped[list["PostMedia"]] = relationship(
+        "PostMedia",
+        back_populates="post",
+        cascade="all, delete-orphan",
+        order_by="PostMedia.position",
+    )
     poll_options: Mapped[list["PostPollOption"]] = relationship(
         "PostPollOption",
         back_populates="post",
@@ -122,6 +130,30 @@ class Post(Base):
     @property
     def author_id(self) -> int:
         return self.user_id
+
+
+class PostMedia(Base):
+    """One extra picture of a carousel post (position 1, 2, 3 ...; position 0 is Post.media_*)."""
+
+    __tablename__ = "post_media"
+
+    media_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    post_id: Mapped[int] = mapped_column(
+        ForeignKey("posts.post_id", ondelete="CASCADE"), nullable=False
+    )
+    position: Mapped[int] = mapped_column(Integer, nullable=False)
+    media_mime: Mapped[str] = mapped_column(String(100), nullable=False)
+    media_size: Mapped[int] = mapped_column(Integer, nullable=False)
+    media_data: Mapped[bytes] = mapped_column(
+        LargeBinary().with_variant(LONGBLOB(), "mysql"), nullable=False, deferred=True
+    )
+
+    post: Mapped["Post"] = relationship("Post", back_populates="extra_media")
+
+    __table_args__ = (
+        UniqueConstraint("post_id", "position", name="uq_post_media_post_position"),
+        Index("idx_post_media_post", "post_id", "position"),
+    )
 
 
 class PostPollOption(Base):

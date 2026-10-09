@@ -47,6 +47,8 @@ class Settings(BaseSettings):
 
     # Publishes scheduled posts when their time arrives.
     POST_SCHEDULER_ENABLED: bool = True
+    # Add a few example posts when the database has no posts yet (development only).
+    SEED_DEMO_POSTS: bool = True
     POST_SCHEDULER_INTERVAL_SECONDS: int = 30
 
     # Login / OTP throttling.

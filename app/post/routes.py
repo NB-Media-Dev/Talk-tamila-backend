@@ -1,6 +1,6 @@
 import re
 from datetime import datetime
-from typing import Optional
+from typing import List, Optional
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile, status
 from fastapi.responses import Response
@@ -29,7 +29,12 @@ from app.common.schemas.post import (
     VoteRequest,
 )
 from app.common.services.post_engagement_service import PostEngagementService
-from app.common.services.post_service import PostService, max_bytes_for, to_utc_naive
+from app.common.services.post_service import (
+    MAX_CAROUSEL_ITEMS,
+    PostService,
+    max_bytes_for,
+    to_utc_naive,
+)
 from app.core.dependencies import (
     get_current_admin,
     get_current_user,
@@ -66,6 +71,9 @@ async def create_post(
     music_start_time: Optional[float] = Form(None),
     music_duration: Optional[float] = Form(None),
     media: Optional[UploadFile] = File(None),
+    more_media: Optional[List[UploadFile]] = File(
+        None, description="Pictures 2, 3, ... of a carousel post (up to 9 more)"
+    ),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> FeedResponse:
@@ -82,6 +90,29 @@ async def create_post(
                 status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
                 detail=f"That file is too large. Maximum size is {limit // (1024 * 1024)} MB.",
             )
+
+    extra_media: List[bytes] = []
+    extra_files = [f for f in (more_media or []) if f is not None and f.filename]
+    if extra_files:
+        if post_type.strip().lower() != "image" or media_bytes is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Only photo posts can have more than one picture.",
+            )
+        if 1 + len(extra_files) > MAX_CAROUSEL_ITEMS:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"A carousel can have at most {MAX_CAROUSEL_ITEMS} pictures.",
+            )
+        image_limit = max_bytes_for("image")
+        for extra in extra_files:
+            data = await extra.read(image_limit + 1)
+            if len(data) > image_limit:
+                raise HTTPException(
+                    status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                    detail=f"That file is too large. Maximum size is {image_limit // (1024 * 1024)} MB each.",
+                )
+            extra_media.append(data)
 
     return PostService.create_post(
         db=db,
@@ -103,6 +134,7 @@ async def create_post(
         ),
         comments_disabled=comments_disabled,
         hide_like_count=hide_like_count,
+        extra_media=extra_media,
     )
 
 
@@ -433,19 +465,14 @@ def _parse_range(range_header: Optional[str], size: int):
     return start, end, True
 
 
-@router.get("/{post_id:int}/media")
-def get_post_media(
+def _serve_media(
     post_id: int,
+    position: int,
     request: Request,
-    viewer: Optional[User] = Depends(get_optional_current_user),
-    db: Session = Depends(get_db),
+    viewer: Optional[User],
+    db: Session,
 ) -> Response:
-    """Public for published posts (<img>/<video> tags cannot send a token).
-
-    Media of a scheduled post is only served to a logged-in admin. Media of an archived
-    post is only served to its owner.
-    """
-    info = PostService.media_info(db, post_id, viewer)
+    info = PostService.media_info(db, post_id, viewer, position)
     if not info:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Media not found.")
     mime, size, post_status = info
@@ -465,8 +492,35 @@ def get_post_media(
         return Response(status_code=416, headers={"Content-Range": f"bytes */{size}"})
     start, end, partial = byte_range
 
-    body = PostService.media_bytes(db, post_id, start, end - start + 1)
+    body = PostService.media_bytes(db, post_id, start, end - start + 1, position)
     if partial:
         headers["Content-Range"] = f"bytes {start}-{end}/{size}"
         return Response(content=body, status_code=206, media_type=mime, headers=headers)
     return Response(content=body, media_type=mime, headers=headers)
+
+
+@router.get("/{post_id:int}/media")
+def get_post_media(
+    post_id: int,
+    request: Request,
+    viewer: Optional[User] = Depends(get_optional_current_user),
+    db: Session = Depends(get_db),
+) -> Response:
+    """Public for published posts (<img>/<video> tags cannot send a token).
+
+    Media of a scheduled post is only served to a logged-in admin. Media of an archived
+    post is only served to its owner.
+    """
+    return _serve_media(post_id, 0, request, viewer, db)
+
+
+@router.get("/{post_id:int}/media/{position:int}")
+def get_post_media_slide(
+    post_id: int,
+    position: int,
+    request: Request,
+    viewer: Optional[User] = Depends(get_optional_current_user),
+    db: Session = Depends(get_db),
+) -> Response:
+    """Slide `position` (1, 2, 3 ...) of a carousel post. Same visibility rules as /media."""
+    return _serve_media(post_id, position, request, viewer, db)

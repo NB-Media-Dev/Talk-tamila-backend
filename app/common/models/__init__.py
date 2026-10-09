@@ -14,6 +14,7 @@ from app.common.models.messaging import DirectMessage, MessageReaction
 from app.common.models.moderation import ChatMute, UserBlock, UserReport
 from app.common.models.post import (
     Post,
+    PostMedia,
     PostPollOption,
     PostPollVote,
     PostLike,
@@ -45,6 +46,7 @@ __all__ = [
     "UserBlock",
     "UserReport",
     "Post",
+    "PostMedia",
     "PostPollOption",
     "PostPollVote",
     "PostLike",
