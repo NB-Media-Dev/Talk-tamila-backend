@@ -12,7 +12,18 @@ from app.common.models.social import Profile, Notification, Follow, CloseFriend
 from app.common.models.music import MusicTrack
 from app.common.models.messaging import DirectMessage, MessageReaction
 from app.common.models.moderation import ChatMute, UserBlock, UserReport
-from app.common.models.post import Post, PostPollOption, PostPollVote
+from app.common.models.post import (
+    Post,
+    PostPollOption,
+    PostPollVote,
+    PostLike,
+    PostComment,
+    PostCommentLike,
+    PostSave,
+    PostShare,
+    PostView,
+    PostReport,
+)
 
 __all__ = [
     "User",
@@ -36,4 +47,11 @@ __all__ = [
     "Post",
     "PostPollOption",
     "PostPollVote",
+    "PostLike",
+    "PostComment",
+    "PostCommentLike",
+    "PostSave",
+    "PostShare",
+    "PostView",
+    "PostReport",
 ]

@@ -80,6 +80,24 @@ STARTUP_STATEMENTS: tuple[str, ...] = (
     "UPDATE posts SET published_at = created_at WHERE status = 'published' AND published_at IS NULL",
     "CREATE INDEX idx_posts_status_scheduled ON posts (status, scheduled_at)",
     "CREATE INDEX idx_posts_published_at ON posts (published_at, post_id)",
+    # --- post owner controls: pin, comments off, hide likes, edited, soft-delete flag
+    "ALTER TABLE posts ADD COLUMN is_deleted BOOLEAN NOT NULL DEFAULT FALSE",
+    "ALTER TABLE posts ADD COLUMN is_pinned BOOLEAN NOT NULL DEFAULT FALSE",
+    "ALTER TABLE posts ADD COLUMN pinned_at DATETIME NULL",
+    "ALTER TABLE posts ADD COLUMN comments_disabled BOOLEAN NOT NULL DEFAULT FALSE",
+    "ALTER TABLE posts ADD COLUMN hide_like_count BOOLEAN NOT NULL DEFAULT FALSE",
+    "ALTER TABLE posts ADD COLUMN edited_at DATETIME NULL",
+    # --- post music (same fields stories use)
+    "ALTER TABLE posts ADD COLUMN music_id INT NULL",
+    "ALTER TABLE posts ADD COLUMN music_title VARCHAR(255) NULL",
+    "ALTER TABLE posts ADD COLUMN music_artist VARCHAR(255) NULL",
+    "ALTER TABLE posts ADD COLUMN music_url TEXT NULL",
+    "ALTER TABLE posts ADD COLUMN music_thumbnail TEXT NULL",
+    "ALTER TABLE posts ADD COLUMN music_start_time FLOAT NOT NULL DEFAULT 0",
+    "ALTER TABLE posts ADD COLUMN music_duration FLOAT NOT NULL DEFAULT 30",
+    "CREATE INDEX idx_posts_user_pinned ON posts (user_id, is_pinned, status)",
+    # Likes, comments, saves, shares, views and reports live in new tables that
+    # Base.metadata.create_all() creates by itself.
 )
 
 

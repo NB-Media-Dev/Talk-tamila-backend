@@ -10,11 +10,14 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload
 
 from app.common.models.post import (
+    MAX_PINNED_POSTS,
+    STATUS_ARCHIVED,
     STATUS_PUBLISHED,
     STATUS_SCHEDULED,
     Post,
     PostPollOption,
     PostPollVote,
+    PostSave,
     _utc_now,
 )
 from app.common.models.social import Profile
@@ -24,9 +27,12 @@ from app.common.schemas.post import (
     PollOptionOut,
     PollOut,
     PostAuthor,
+    PostEditRequest,
+    PostMusic,
     PostOut,
     ScheduledListResponse,
 )
+from app.common.services.post_engagement_service import PostEngagementService
 
 logger = logging.getLogger("talktamila.posts")
 
@@ -47,6 +53,12 @@ POLL_MAX_OPTIONS = 5
 POLL_OPTION_MAX_LENGTH = 80
 
 ALLOWED_GIF_HOST_SUFFIXES = ("giphy.com", "tenor.com")
+
+# Song on a post
+MUSIC_URL_MAX = 2000
+MUSIC_MIN_CLIP = 5.0
+MUSIC_MAX_CLIP = 90.0
+MUSIC_MAX_START = 3600.0
 
 # Scheduling window: at least 1 minute ahead, at most 365 days ahead.
 SCHEDULE_MIN_LEAD = timedelta(minutes=1)
@@ -109,6 +121,16 @@ def validate_schedule_window(when_utc: datetime) -> datetime:
     return when_utc
 
 
+def _clamp(value, low: float, high: float, default: float) -> float:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return default
+    if number != number:  # NaN
+        return default
+    return max(low, min(high, number))
+
+
 class PostService:
     # ------------------------------------------------------------------ rules
     @staticmethod
@@ -153,6 +175,80 @@ class PostService:
                 "scheduled_at must be an ISO-8601 time, e.g. 2026-10-10T18:30:00+05:30."
             ) from None
         return validate_schedule_window(to_utc_naive(parsed))
+
+    # ----------------------------------------------------------------- music
+    @staticmethod
+    def music_from_form(
+        music_id: Optional[int],
+        title: Optional[str],
+        artist: Optional[str],
+        audio_url: Optional[str],
+        cover_url: Optional[str],
+        start_time: Optional[float],
+        duration: Optional[float],
+    ) -> Optional[dict]:
+        """Collect the song form fields into one dict. None when no song was sent."""
+        if not (title or "").strip() and not (audio_url or "").strip():
+            return None
+        return {
+            "music_id": music_id,
+            "title": title,
+            "artist": artist,
+            "audio_url": audio_url,
+            "cover_url": cover_url,
+            "start_time": start_time,
+            "duration": duration,
+        }
+
+    @staticmethod
+    def _clean_music(raw: dict) -> dict:
+        title = (raw.get("title") or "").strip()
+        url = (raw.get("audio_url") or "").strip()
+        if not title or not url:
+            raise _bad("Pick a song first.")
+        if not url.startswith("https://") or len(url) > MUSIC_URL_MAX:
+            raise _bad("That song can't be used on a post.")
+        artist = (raw.get("artist") or "").strip()[:255] or None
+        cover = (raw.get("cover_url") or "").strip() or None
+        if cover and (not cover.startswith(("https://", "http://")) or len(cover) > MUSIC_URL_MAX):
+            cover = None
+        music_id = raw.get("music_id")
+        try:
+            music_id = int(music_id) if music_id is not None else None
+        except (TypeError, ValueError):
+            music_id = None
+        return {
+            "music_id": music_id,
+            "title": title[:255],
+            "artist": artist,
+            "url": url,
+            "thumbnail": cover,
+            "start": _clamp(raw.get("start_time"), 0.0, MUSIC_MAX_START, 0.0),
+            "duration": _clamp(raw.get("duration"), MUSIC_MIN_CLIP, MUSIC_MAX_CLIP, 30.0),
+        }
+
+    @staticmethod
+    def _set_music(post: Post, raw: dict) -> None:
+        if post.post_type == "video":
+            raise _bad("Videos keep their own sound, so a song can't be added to them.")
+        clean = PostService._clean_music(raw)
+        post.music_id = clean["music_id"]
+        post.music_title = clean["title"]
+        post.music_artist = clean["artist"]
+        post.music_url = clean["url"]
+        post.music_thumbnail = clean["thumbnail"]
+        post.music_start_time = clean["start"]
+        post.music_duration = clean["duration"]
+
+    @staticmethod
+    def _clear_music(post: Post) -> None:
+        post.music_id = None
+        post.music_title = None
+        post.music_artist = None
+        post.music_url = None
+        post.music_thumbnail = None
+        post.music_start_time = 0.0
+        post.music_duration = 30.0
 
     # ------------------------------------------------------ content validation
     @staticmethod
@@ -209,6 +305,9 @@ class PostService:
         gif_url: Optional[str],
         poll_options: List[str],
         scheduled_at: Optional[datetime] = None,
+        music: Optional[dict] = None,
+        comments_disabled: bool = False,
+        hide_like_count: bool = False,
     ) -> FeedResponse:
         """Create a post. `scheduled_at` must be naive UTC (see parse_scheduled_at)."""
         PostService.assert_can_create(user)
@@ -221,7 +320,13 @@ class PostService:
         if len(text) > MAX_CONTENT_LENGTH:
             raise _bad(f"Posts can be at most {MAX_CONTENT_LENGTH} characters.")
 
-        post = Post(user_id=user.user_id, post_type=post_type, content=text or None)
+        post = Post(
+            user_id=user.user_id,
+            post_type=post_type,
+            content=text or None,
+            comments_disabled=bool(comments_disabled),
+            hide_like_count=bool(hide_like_count),
+        )
 
         if post_type == "text" and not text:
             raise _bad("Write something before posting.")
@@ -231,6 +336,9 @@ class PostService:
             PostService._apply_gif(post, gif_url)
         elif post_type == "poll":
             PostService._apply_poll(post, text, poll_options)
+
+        if music:
+            PostService._set_music(post, music)
 
         if scheduled_at is not None:
             post.status = STATUS_SCHEDULED
@@ -267,6 +375,7 @@ class PostService:
     def get_feed(db: Session, viewer: User, limit: int, before_id: Optional[int]) -> FeedResponse:
         """Published posts, newest first by publish time. Scheduled posts never appear."""
         PostService._publish_due_safely(db)
+        blocked = PostEngagementService.blocked_ids(db, viewer.user_id)
         stmt = (
             select(Post)
             .join(User, User.user_id == Post.user_id)
@@ -274,6 +383,8 @@ class PostService:
             .order_by(Post.published_at.desc(), Post.post_id.desc())
             .limit(limit + 1)
         )
+        if blocked:
+            stmt = stmt.where(Post.user_id.not_in(blocked))
         if before_id:
             cursor = db.execute(
                 select(Post.published_at, Post.post_id).where(
@@ -302,10 +413,10 @@ class PostService:
         limit: int = 30,
         offset: int = 0,
     ) -> FeedResponse:
-        """Published posts of one person for their profile grid, newest first.
+        """Published posts of one person for their profile grid. Pinned posts come first.
 
-        Scheduled posts never show here, not even to their owner. Admins manage them on the
-        schedule page.
+        Scheduled and archived posts never show here, not even to their owner. Admins manage
+        scheduled posts on the schedule page and owners find archived ones in their Archive tab.
         """
         PostService._publish_due_safely(db)
         limit = max(1, min(int(limit or 30), 60))
@@ -324,11 +435,19 @@ class PostService:
         if user is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
 
+        if PostEngagementService.blocked_between(db, current_user.user_id, user.user_id):
+            return FeedResponse(items=[], authors={}, has_more=False, next_before_id=None)
+
         rows = list(
             db.execute(
                 select(Post)
                 .where(Post.user_id == user.user_id, Post.status == STATUS_PUBLISHED)
-                .order_by(Post.published_at.desc(), Post.post_id.desc())
+                .order_by(
+                    Post.is_pinned.desc(),
+                    Post.pinned_at.desc(),
+                    Post.published_at.desc(),
+                    Post.post_id.desc(),
+                )
                 .limit(limit + 1)
                 .offset(offset)
             )
@@ -338,6 +457,71 @@ class PostService:
         has_more = len(rows) > limit
         rows = rows[:limit]
         return PostService._build_feed(db, rows, current_user, has_more=has_more)
+
+    @staticmethod
+    def get_one(db: Session, viewer: User, post_id: int) -> FeedResponse:
+        """One post, for shared links and notifications."""
+        PostService._publish_due_safely(db)
+        post = db.get(Post, post_id)
+        if post is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=MSG_POST_NOT_FOUND)
+        is_owner = post.user_id == viewer.user_id
+        if post.status == STATUS_PUBLISHED:
+            owner = db.get(User, post.user_id)
+            if owner is None or not owner.is_active:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=MSG_POST_NOT_FOUND)
+            if PostEngagementService.blocked_between(db, viewer.user_id, post.user_id):
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=MSG_POST_NOT_FOUND)
+        elif post.status == STATUS_ARCHIVED:
+            if not is_owner:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=MSG_POST_NOT_FOUND)
+        elif not viewer.is_admin:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=MSG_POST_NOT_FOUND)
+        return PostService._build_feed(db, [post], viewer, has_more=False)
+
+    @staticmethod
+    def get_saved(db: Session, viewer: User, limit: int = 30, offset: int = 0) -> FeedResponse:
+        """Posts the viewer saved, most recently saved first."""
+        limit = max(1, min(int(limit or 30), 60))
+        offset = max(0, int(offset or 0))
+        blocked = PostEngagementService.blocked_ids(db, viewer.user_id)
+        stmt = (
+            select(Post)
+            .join(PostSave, PostSave.post_id == Post.post_id)
+            .join(User, User.user_id == Post.user_id)
+            .where(
+                PostSave.user_id == viewer.user_id,
+                Post.status == STATUS_PUBLISHED,
+                User.is_active.is_(True),
+            )
+            .order_by(PostSave.save_id.desc())
+            .limit(limit + 1)
+            .offset(offset)
+        )
+        if blocked:
+            stmt = stmt.where(Post.user_id.not_in(blocked))
+        rows = list(db.execute(stmt).scalars().all())
+        has_more = len(rows) > limit
+        return PostService._build_feed(db, rows[:limit], viewer, has_more=has_more)
+
+    @staticmethod
+    def get_archived(db: Session, viewer: User, limit: int = 30, offset: int = 0) -> FeedResponse:
+        """The viewer's own archived posts."""
+        limit = max(1, min(int(limit or 30), 60))
+        offset = max(0, int(offset or 0))
+        rows = list(
+            db.execute(
+                select(Post)
+                .where(Post.user_id == viewer.user_id, Post.status == STATUS_ARCHIVED)
+                .order_by(Post.published_at.desc(), Post.post_id.desc())
+                .limit(limit + 1)
+                .offset(offset)
+            )
+            .scalars()
+            .all()
+        )
+        has_more = len(rows) > limit
+        return PostService._build_feed(db, rows[:limit], viewer, has_more=has_more)
 
     @staticmethod
     def list_scheduled(
@@ -431,36 +615,79 @@ class PostService:
         }
 
     @staticmethod
+    def _music_out(post: Post) -> Optional[PostMusic]:
+        if not post.music_url or not post.music_title:
+            return None
+        return PostMusic(
+            music_id=post.music_id,
+            title=post.music_title,
+            artist=post.music_artist,
+            audio_url=post.music_url,
+            cover_url=post.music_thumbnail,
+            start_time=float(post.music_start_time or 0.0),
+            duration=float(post.music_duration or 30.0),
+        )
+
+    @staticmethod
     def _to_out(
-        post: Post, viewer: User, counts: Dict[int, int], mine: Dict[int, int]
+        post: Post,
+        viewer: User,
+        counts: Dict[int, int],
+        mine: Dict[int, int],
+        eng: dict,
     ) -> PostOut:
         is_published = post.status == STATUS_PUBLISHED
+        is_owner = post.user_id == viewer.user_id
+        likes_hidden = bool(post.hide_like_count) and not is_owner
+        pid = post.post_id
         return PostOut(
-            post_id=post.post_id,
+            post_id=pid,
             author_id=post.user_id,
             post_type=post.post_type,
             status=post.status,
             content=post.content,
             media_type=post.media_type,
-            media_url=f"/api/v1/posts/{post.post_id}/media" if post.media_mime else None,
+            media_url=f"/api/v1/posts/{pid}/media" if post.media_mime else None,
             gif_url=post.gif_url,
             poll=(
-                PostService._poll_out(post, counts, mine.get(post.post_id))
+                PostService._poll_out(post, counts, mine.get(pid))
                 if post.post_type == "poll"
                 else None
             ),
             created_at=_iso(post.created_at) or "",
             scheduled_at=_iso(post.scheduled_at),
             published_at=_iso(post.published_at),
-            can_delete=(viewer.is_admin or (is_published and post.user_id == viewer.user_id)),
+            can_delete=(
+                viewer.is_admin
+                or (is_owner and post.status in (STATUS_PUBLISHED, STATUS_ARCHIVED))
+            ),
+            like_count=None if likes_hidden else int(eng["likes"].get(pid, 0)),
+            likes_hidden=likes_hidden,
+            comment_count=0 if post.comments_disabled else int(eng["comments"].get(pid, 0)),
+            share_count=int(eng["shares"].get(pid, 0)),
+            liked_by_me=pid in eng["liked"],
+            saved_by_me=pid in eng["saved"],
+            liked_by_preview=eng["preview"].get(pid),
+            is_owner=is_owner,
+            can_edit=is_owner and (is_published or post.status in (STATUS_ARCHIVED, STATUS_SCHEDULED)),
+            following_author=post.user_id in eng["following"],
+            comments_disabled=bool(post.comments_disabled),
+            hide_like_count=bool(post.hide_like_count),
+            is_pinned=bool(post.is_pinned),
+            edited_at=_iso(post.edited_at),
+            music=PostService._music_out(post),
         )
 
     @staticmethod
     def _build_feed(db: Session, posts: List[Post], viewer: User, has_more: bool) -> FeedResponse:
         poll_ids = [p.post_id for p in posts if p.post_type == "poll"]
         counts, mine = PostService._poll_data(db, poll_ids, viewer.user_id)
-        authors = PostService._load_authors(db, sorted({p.user_id for p in posts}))
-        items = [PostService._to_out(p, viewer, counts, mine) for p in posts]
+        author_ids = sorted({p.user_id for p in posts})
+        authors = PostService._load_authors(db, author_ids)
+        eng = PostEngagementService.snapshot(
+            db, [p.post_id for p in posts], viewer.user_id, author_ids
+        )
+        items = [PostService._to_out(p, viewer, counts, mine, eng) for p in posts]
         return FeedResponse(
             items=items,
             authors=authors,
@@ -574,10 +801,118 @@ class PostService:
         db.refresh(post)
         return PostService._build_feed(db, [post], user, has_more=False)
 
+    # ------------------------------------------------------------------- edit
+    @staticmethod
+    def _get_own_post(db: Session, user: User, post_id: int, allow_scheduled: bool = True) -> Post:
+        post = db.get(Post, post_id)
+        # Scheduled posts are hidden from non-admins, so they get a plain 404.
+        if not post or (post.status == STATUS_SCHEDULED and not user.is_admin):
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=MSG_POST_NOT_FOUND)
+        if post.status == STATUS_SCHEDULED and not allow_scheduled:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT, detail="This post hasn't been published yet."
+            )
+        if post.user_id != user.user_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN, detail="You can only change your own posts."
+            )
+        return post
+
+    @staticmethod
+    def edit_post(db: Session, user: User, post_id: int, changes: PostEditRequest) -> FeedResponse:
+        """Change the caption, the song, and the comment / like-count settings of a post."""
+        post = PostService._get_own_post(db, user, post_id)
+        fields = changes.model_fields_set
+
+        if "content" in fields:
+            text = (changes.content or "").strip()
+            if len(text) > MAX_CONTENT_LENGTH:
+                raise _bad(f"Posts can be at most {MAX_CONTENT_LENGTH} characters.")
+            if post.post_type == "text" and not text:
+                raise _bad("Write something before saving.")
+            if post.post_type == "poll":
+                if not text:
+                    raise _bad("Write the poll question first.")
+                if text != (post.content or ""):
+                    votes = db.execute(
+                        select(func.count(PostPollVote.vote_id)).where(
+                            PostPollVote.post_id == post_id
+                        )
+                    ).scalar() or 0
+                    if votes:
+                        raise _bad("The poll question can't be changed after people have voted.")
+            new_content = text or None
+            if new_content != post.content:
+                post.content = new_content
+                if post.status != STATUS_SCHEDULED:
+                    post.edited_at = _utc_now()
+
+        if changes.comments_disabled is not None:
+            post.comments_disabled = bool(changes.comments_disabled)
+        if changes.hide_like_count is not None:
+            post.hide_like_count = bool(changes.hide_like_count)
+
+        if changes.remove_music:
+            PostService._clear_music(post)
+        elif changes.music is not None:
+            PostService._set_music(post, changes.music.model_dump())
+
+        db.commit()
+        return PostService._single(db, user, post_id)
+
+    @staticmethod
+    def set_archived(db: Session, user: User, post_id: int, archive: bool) -> FeedResponse:
+        """Hide a post from the profile and feed (archive) or bring it back (restore)."""
+        post = PostService._get_own_post(db, user, post_id, allow_scheduled=False)
+        from_status = STATUS_PUBLISHED if archive else STATUS_ARCHIVED
+        to_status = STATUS_ARCHIVED if archive else STATUS_PUBLISHED
+        if post.status != from_status:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="This post is already archived." if archive else "This post isn't archived.",
+            )
+        values: dict = {"status": to_status}
+        if archive:
+            values.update(is_pinned=False, pinned_at=None)
+        result = db.execute(
+            update(Post).where(Post.post_id == post_id, Post.status == from_status).values(**values)
+        )
+        if result.rowcount != 1:
+            db.rollback()
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT, detail="This post just changed. Try again."
+            )
+        PostService._adjust_posts_count(db, post.user_id, -1 if archive else 1)
+        db.commit()
+        return PostService._single(db, user, post_id)
+
+    @staticmethod
+    def set_pinned(db: Session, user: User, post_id: int, pinned: bool) -> FeedResponse:
+        post = PostService._get_own_post(db, user, post_id, allow_scheduled=False)
+        if post.status != STATUS_PUBLISHED:
+            raise _bad("Only posts on your profile can be pinned.")
+        if pinned and not post.is_pinned:
+            count = db.execute(
+                select(func.count(Post.post_id)).where(
+                    Post.user_id == user.user_id,
+                    Post.status == STATUS_PUBLISHED,
+                    Post.is_pinned.is_(True),
+                )
+            ).scalar() or 0
+            if count >= MAX_PINNED_POSTS:
+                raise _bad(f"You can pin up to {MAX_PINNED_POSTS} posts. Unpin one first.")
+            post.is_pinned = True
+            post.pinned_at = _utc_now()
+        elif not pinned:
+            post.is_pinned = False
+            post.pinned_at = None
+        db.commit()
+        return PostService._single(db, user, post_id)
+
     # ----------------------------------------------------------------- delete
     @staticmethod
     def delete_post(db: Session, user: User, post_id: int) -> dict:
-        """Delete a published post, or cancel a scheduled one."""
+        """Delete a published or archived post, or cancel a scheduled one."""
         post = db.get(Post, post_id)
         # Scheduled posts are hidden from non-admins, so they get a plain 404.
         if not post or (post.status == STATUS_SCHEDULED and not user.is_admin):
@@ -586,6 +921,7 @@ class PostService:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN, detail="You can only delete your own posts."
             )
+        # Archived posts were already taken off the counter when they were archived.
         was_published = post.status == STATUS_PUBLISHED
         owner_id = post.user_id
         db.delete(post)
@@ -634,14 +970,18 @@ class PostService:
     ) -> Optional[Tuple[str, int, str]]:
         """Return (mime, size, status), or None when the viewer must not see this media."""
         row = db.execute(
-            select(Post.media_mime, Post.media_size, Post.status).where(
+            select(Post.media_mime, Post.media_size, Post.status, Post.user_id).where(
                 Post.post_id == post_id, Post.media_mime.is_not(None)
             )
         ).first()
         if not row or not row[1]:
             return None
-        if row[2] != STATUS_PUBLISHED and not (viewer is not None and viewer.is_admin):
-            return None
+        if row[2] != STATUS_PUBLISHED:
+            allowed = viewer is not None and (
+                viewer.is_admin or (row[2] == STATUS_ARCHIVED and viewer.user_id == row[3])
+            )
+            if not allowed:
+                return None
         return row[0], int(row[1]), row[2]
 
     @staticmethod
