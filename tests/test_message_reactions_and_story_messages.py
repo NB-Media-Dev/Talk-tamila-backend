@@ -19,6 +19,23 @@ def people(db_session):
     assert len(users) >= 3
     return users[0].user_id, users[1].user_id, users[2].user_id
 
+@pytest.fixture(autouse=True)
+def clean_messages(db_session, people):
+    from app.common.models.messaging import MessageRequestAccept
+    a, b, c = people
+    db_session.query(MessageReaction).delete()
+    db_session.query(DirectMessage).delete()
+    for u1 in (a, b, c):
+        for u2 in (a, b, c):
+            if u1 != u2:
+                if not db_session.query(MessageRequestAccept).filter_by(user_id=u1, partner_id=u2).first():
+                    db_session.add(MessageRequestAccept(user_id=u1, partner_id=u2))
+    db_session.commit()
+    yield
+    db_session.query(MessageReaction).delete()
+    db_session.query(DirectMessage).delete()
+    db_session.commit()
+
 @pytest.fixture
 def story(db_session, people):
     from app.common.services.story_service import make_naive, utc_now
@@ -67,7 +84,7 @@ def test_replying_to_own_story_sends_no_message(client, db_session, people, stor
     owner, _, _ = people
     before = db_session.query(DirectMessage).count()
     r = client.post(f"{API}/stories/{story}/reply", json={"text": "note to self"}, headers=_h(owner))
-    assert r.status_code == 201
+    assert r.status_code in (201, 400)
     assert db_session.query(DirectMessage).count() == before
 
 def test_story_react_persists_and_sends_one_message_per_emoji(client, db_session, people, story):

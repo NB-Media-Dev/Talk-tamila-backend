@@ -402,6 +402,16 @@ def mute_creator(
     return StoryService.mute_creator(user_id, current_user, db)
 
 
+@router.delete("/mute/{user_id:int}", response_model=StoryMuteResponse)
+@router.delete("/users/{user_id:int}/mute", response_model=StoryMuteResponse)
+def unmute_creator(
+    user_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    return StoryService.unmute_creator(user_id, current_user, db)
+
+
 @router.post("/follow/{user_id:int}")
 def follow_user(
     user_id: int,

@@ -19,6 +19,7 @@ from app.freelancer.routes import router as freelancer_router
 from app.influencer.routes import router as influencer_router
 from app.message.calls import router as calls_router
 from app.message.routes import router as message_router
+from app.notification.routes import router as notification_router
 from app.post.routes import router as post_router
 from app.profile.routes import router as profile_router
 from app.story.routes import router as story_router
@@ -109,6 +110,7 @@ for _router in (
     auth_router,
     story_router,
     story_settings_router,
+    notification_router,
     message_router,
     calls_router,
     post_router,

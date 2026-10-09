@@ -1811,7 +1811,7 @@ class StoryService:
         if not story:
             raise HTTPException(status_code=404, detail="Story not found")
 
-        if current_user.id != story.user_id and not current_user.is_admin:
+        if current_user.id != story.user_id:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Only the author who created this story can delete it.",
