@@ -4,15 +4,23 @@ import struct
 import zlib
 from datetime import date, datetime, timedelta, timezone
 
-from sqlalchemy import func
+from sqlalchemy import delete, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.security import hash_password
 from app.common.models import (
     Post,
+    PostComment,
+    PostCommentLike,
     PostLike,
     PostMedia,
     PostPollOption,
+    PostPollVote,
+    PostReport,
+    PostSave,
+    PostShare,
+    PostView,
     Profile,
     Story,
     User,
@@ -128,9 +136,11 @@ def seed_db_data(db: Session):
 
 
 # ---------------------------------------------------------------------------
-# Example posts, so the feed is never empty the first time someone opens the app.
-# Runs only when there are no posts at all (see app/main.py). The pictures are drawn
-# here as small PNG landscapes, so no image files or extra packages are needed.
+# Demo posts for presentations. Every demo post carries a stable `demo_key` ("demo-v1:...").
+# Seeding creates only the keys that are missing, so it can run any number of times, and
+# removal deletes only rows whose key starts with DEMO_KEY_PREFIX. Real posts have no key
+# and are never touched. The pictures are drawn below as small PNG landscapes and stored
+# in the database like any uploaded image, so nothing depends on the internet.
 # ---------------------------------------------------------------------------
 _PALETTES = [
     ((255, 183, 94), (237, 117, 73), (74, 38, 64)),   # warm sunset
@@ -198,77 +208,210 @@ def _scene(index: int, width: int = 432, height: int = 540) -> bytes:
     return _png(width, height, rows)
 
 
-def seed_demo_posts(db: Session) -> int:
-    """Create a few example posts (text, poll, photo and carousels). Returns how many."""
-    if db.query(func.count(Post.post_id)).scalar():
-        return 0
+DEMO_KEY_PREFIX = "demo-v1:"
 
-    wanted = ["Arjun", "Priya", "Karthik", "Swathi", "Vishwa", "Deepak", "Ananya", "Rohan", "Amrita"]
-    people = [u for u in db.query(User).filter(User.username.in_(wanted)).all()]
-    people.sort(key=lambda u: wanted.index(u.username))
+# Newest demo post is this many minutes old; the oldest is still inside the feed's
+# 14-day "recent posts from everyone" window (FEED_DISCOVER_DAYS in post_service.py).
+# kind: text | image | carousel | poll.  `extra` = slide count (carousel) or poll options.
+# likes = how many of the other demo people liked it; votes = poll votes per option.
+_DEMO_POSTS: list[dict] = [
+    {"key": "carousel-chennai-evening", "author": "Arjun", "minutes_ago": 25, "kind": "carousel", "extra": 4, "likes": 6,
+     "caption": "சென்னை மாலைகள் எப்போதும் ஸ்பெஷல் தான் 🌇 Swipe through → #Chennai #Tamil",
+     "comments": [("Priya", "Semma clicks! 🔥"), ("Karthik", "Super ra, keep going 👏")]},
+    {"key": "text-vanakkam", "author": "Priya", "minutes_ago": 70, "kind": "text", "likes": 5,
+     "caption": "வணக்கம் Talk Tamila குடும்பமே! 🙏 இந்த வாரம் நீங்கள் என்ன உருவாக்குகிறீர்கள்? Tell us below. #TamilCreators",
+     "comments": [("Swathi", "Working on a new reel 🎬"), ("Deepak", "வாழ்த்துகள்! 🙌")]},
+    {"key": "poll-sunday", "author": "Karthik", "minutes_ago": 150, "kind": "poll", "likes": 4,
+     "caption": "ஞாயிற்றுக்கிழமை எப்படி கொண்டாடுவீர்கள்? How do you spend your Sunday?",
+     "extra": ["குடும்பத்துடன்", "திரைப்படம்", "பயணம்", "தூக்கம் 😴"], "votes": [4, 3, 2, 1],
+     "comments": [("Ananya", "Family time always ❤️")]},
+    {"key": "image-marina-sunset", "author": "Swathi", "minutes_ago": 60 * 6, "kind": "image", "extra": 1, "likes": 7,
+     "caption": "Marina sunset vibes 🌅 கடற்கரை காற்று தனி சுகம் #Chennai #Marina",
+     "comments": [("Arjun", "Golden hour never disappoints 📸")]},
+    {"key": "carousel-weekend-trip", "author": "Vishwa", "minutes_ago": 60 * 20, "kind": "carousel", "extra": 3, "likes": 5,
+     "caption": "Weekend trip diary ✨ உங்களுக்குப் பிடித்த படம் எது? #Travel #Weekend",
+     "comments": [("Amrita", "Third one! 😍"), ("Rohan", "Take me along next time 😄")]},
+    {"key": "text-creator-tip", "author": "Deepak", "minutes_ago": 60 * 34, "kind": "text", "likes": 3,
+     "caption": "Tip for new creators: post a little every day. தினமும் சிறிது சிறிதாக பதிவிடுங்கள் 💪 #CreatorTips",
+     "comments": []},
+    {"key": "poll-diwali", "author": "Ananya", "minutes_ago": 60 * 52, "kind": "poll", "likes": 4,
+     "caption": "தீபாவளிக்கு எந்த லுக் போஸ்ட் செய்யட்டும்? Which festive look should I post next? #Diwali",
+     "extra": ["பாரம்பரிய புடவை", "Indo-western", "Casual street style"], "votes": [5, 2, 1],
+     "comments": [("Priya", "Saree look please! 🪔")]},
+    {"key": "image-golden-hour", "author": "Rohan", "minutes_ago": 60 * 24 * 3, "kind": "image", "extra": 1, "likes": 5,
+     "caption": "Golden hour never disappoints 📸 #Photography #GoldenHour",
+     "comments": [("Swathi", "Love the colours ❤️")]},
+    {"key": "carousel-photo-walk", "author": "Amrita", "minutes_ago": 60 * 24 * 5, "kind": "carousel", "extra": 5, "likes": 6,
+     "caption": "Throwback to our little photo walk 🌿 இயற்கையோடு ஒரு நாள் #PhotoWalk",
+     "comments": [("Vishwa", "Great memories! 🙌")]},
+    {"key": "freelancer-portfolio", "author": "freelancer", "minutes_ago": 60 * 24 * 7, "kind": "image", "extra": 1, "likes": 4,
+     "caption": "Poster design for a Pongal campaign 🎨 Open for new projects this month! #Design #Portfolio",
+     "comments": [("Arjun", "Clean work 👌")]},
+    {"key": "text-freelancer-open", "author": "freelancer", "minutes_ago": 60 * 24 * 9, "kind": "text", "likes": 3,
+     "caption": "Reels editing, posters and thumbnails ✅ DM me for rates. திட்டங்களுக்கு தொடர்பு கொள்ளுங்கள் #Freelance",
+     "comments": []},
+]
+
+_FALLBACK_AUTHORS = 6
+
+
+def _demo_key(short: str) -> str:
+    return f"{DEMO_KEY_PREFIX}{short}"[:64]
+
+
+def _naive_utc_now() -> datetime:
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+def _demo_people(db: Session) -> dict:
+    """username -> User for everyone a demo post can be attributed to (active users only)."""
+    wanted = {spec["author"] for spec in _DEMO_POSTS} | {
+        "Arjun", "Priya", "Karthik", "Swathi", "Vishwa", "Deepak", "Ananya", "Rohan", "Amrita"
+    }
+    rows = db.execute(select(User).where(User.username.in_(wanted), User.is_active.is_(True))).scalars().all()
+    return {u.username: u for u in rows}
+
+
+def _build_demo_post(spec: dict, author: User, others: list, when: datetime, picture_index: int) -> Post:
+    kind = spec["kind"]
+    post = Post(
+        user_id=author.user_id,
+        post_type="poll" if kind == "poll" else ("text" if kind == "text" else "image"),
+        content=spec["caption"],
+        status="published",
+        created_at=when,
+        published_at=when,
+        demo_key=_demo_key(spec["key"]),
+    )
+    if kind in ("image", "carousel"):
+        slides = spec["extra"] if kind == "carousel" else 1
+        first = _scene(picture_index)
+        post.media_type = "image"
+        post.media_mime = "image/png"
+        post.media_size = len(first)
+        post.media_data = first
+        for position in range(1, slides):
+            data = _scene(picture_index + position)
+            post.extra_media.append(
+                PostMedia(position=position, media_mime="image/png", media_size=len(data), media_data=data)
+            )
+    elif kind == "poll":
+        post.poll_options = [PostPollOption(text=t, position=i) for i, t in enumerate(spec["extra"])]
+    return post
+
+
+def seed_demo_posts(db: Session, refresh_dates: bool = False) -> int:
+    """Create the demo posts that do not exist yet. Safe to run any number of times.
+
+    * A post is identified by its `demo_key`, never by its caption, so real posts can
+      never collide with it and are never changed.
+    * Each post (pictures, poll options, likes, comments, votes) is committed on its own,
+      so an interrupted run leaves only complete posts and the next run finishes the rest.
+    * `refresh_dates=True` moves the timestamps of the EXISTING demo posts back to "recent"
+      (use it before a presentation if the demo data is more than a few days old).
+
+    Returns how many posts were newly created.
+    """
+    people = _demo_people(db)
     if not people:
-        people = db.query(User).filter(User.is_active.is_(True)).limit(6).all()
+        # Unusual database: borrow the first few active users instead.
+        fallback = db.execute(select(User).where(User.is_active.is_(True)).limit(_FALLBACK_AUTHORS)).scalars().all()
+        people = {u.username: u for u in fallback}
     if not people:
         return 0
+    fallback_cycle = list(people.values())
 
-    now = datetime.now(timezone.utc).replace(tzinfo=None)
-
-    # (minutes ago, kind, caption, slides or poll options)
-    plan = [
-        (12, "carousel", "Chennai evenings hit different 🌇 Swipe through →", 4),
-        (45, "text", "Vanakkam Talk Tamila family! 🙏 Share what you are creating this week.", 0),
-        (130, "poll", "What is your favourite way to spend a Sunday?", ["Family time", "Movies", "Travel", "Sleep 😴"]),
-        (300, "image", "Marina sunset vibes 🌅 #chennai #tamil", 1),
-        (60 * 26, "carousel", "Weekend trip diary ✨ which one is your favourite?", 3),
-        (60 * 52, "text", "Tip for new creators: post a little every day. Small steps add up. 💪 #creators", 0),
-        (60 * 76, "image", "Golden hour never disappoints 📸", 1),
-        (60 * 120, "carousel", "Throwback to our little photo walk 🌿 Swipe for more", 5),
-    ]
+    now = _naive_utc_now()
+    existing = {
+        key: post_id
+        for key, post_id in db.execute(
+            select(Post.demo_key, Post.post_id).where(Post.demo_key.like(f"{DEMO_KEY_PREFIX}%"))
+        ).all()
+    }
 
     created = 0
     picture_index = 0
-    for number, (minutes_ago, kind, caption, extra) in enumerate(plan):
-        author = people[number % len(people)]
-        when = now - timedelta(minutes=minutes_ago)
-        post = Post(
-            user_id=author.user_id,
-            post_type="poll" if kind == "poll" else ("text" if kind == "text" else "image"),
-            content=caption,
-            status="published",
-            created_at=when,
-            published_at=when,
-        )
+    for number, spec in enumerate(_DEMO_POSTS):
+        key = _demo_key(spec["key"])
+        when = now - timedelta(minutes=spec["minutes_ago"])
+        slides = spec["extra"] if spec["kind"] == "carousel" else (1 if spec["kind"] == "image" else 0)
+        base_picture = picture_index
+        picture_index += slides  # keeps the pictures of every post stable between runs
 
-        if kind in ("image", "carousel"):
-            slides = extra if kind == "carousel" else 1
-            first = _scene(picture_index)
-            picture_index += 1
-            post.media_type = "image"
-            post.media_mime = "image/png"
-            post.media_size = len(first)
-            post.media_data = first
-            for position in range(1, slides):
-                data = _scene(picture_index)
-                picture_index += 1
-                post.extra_media.append(
-                    PostMedia(position=position, media_mime="image/png", media_size=len(data), media_data=data)
+        if key in existing:
+            if refresh_dates:
+                db.execute(
+                    Post.__table__.update()
+                    .where(Post.demo_key == key)
+                    .values(created_at=when, published_at=when, status="published")
                 )
-        elif kind == "poll":
-            post.poll_options = [PostPollOption(text=t, position=i) for i, t in enumerate(extra)]
+                db.commit()
+            continue
 
-        db.add(post)
-        db.flush()
+        author = people.get(spec["author"]) or fallback_cycle[number % len(fallback_cycle)]
+        others = [u for u in people.values() if u.user_id != author.user_id]
+        try:
+            post = _build_demo_post(spec, author, others, when, base_picture)
+            db.add(post)
+            db.flush()
 
-        # A few likes from the other example people, so the posts look alive.
-        likers = [u for u in people if u.user_id != author.user_id][: (number % 4) + 1]
-        for liker in likers:
-            db.add(PostLike(post_id=post.post_id, user_id=liker.user_id))
+            for liker in others[: spec.get("likes", 0)]:
+                db.add(PostLike(post_id=post.post_id, user_id=liker.user_id, created_at=when))
 
-        profile = author.profile
-        if profile is not None:
-            profile.posts_count = (profile.posts_count or 0) + 1
-        created += 1
+            for who, body in spec.get("comments", []):
+                commenter = people.get(who) or (others[0] if others else author)
+                db.add(PostComment(post_id=post.post_id, user_id=commenter.user_id, body=body, created_at=when))
 
-    db.commit()
-    logger.info("Added %s example posts.", created)
+            if spec["kind"] == "poll":
+                voters = [u for u in others]
+                cursor = 0
+                for option, count in zip(post.poll_options, spec.get("votes", [])):
+                    for _ in range(count):
+                        if cursor >= len(voters):
+                            break
+                        db.add(PostPollVote(post_id=post.post_id, option_id=option.option_id, user_id=voters[cursor].user_id))
+                        cursor += 1
+
+            if author.profile is not None:
+                author.profile.posts_count = (author.profile.posts_count or 0) + 1
+            db.commit()
+            created += 1
+        except IntegrityError:
+            # Another process created the same key at the same moment. Nothing to do.
+            db.rollback()
+        except Exception:
+            db.rollback()
+            logger.exception("Could not add demo post %s; it will be retried on the next run", key)
+
+    if created:
+        logger.info("Added %s demo posts.", created)
     return created
+
+
+def remove_demo_posts(db: Session) -> int:
+    """Delete ONLY posts whose demo_key starts with DEMO_KEY_PREFIX (and their likes,
+    comments, votes, pictures). Returns how many posts were removed."""
+    rows = db.execute(
+        select(Post.post_id, Post.user_id).where(Post.demo_key.like(f"{DEMO_KEY_PREFIX}%"))
+    ).all()
+    if not rows:
+        return 0
+    ids = [r[0] for r in rows]
+
+    comment_ids = select(PostComment.comment_id).where(PostComment.post_id.in_(ids))
+    db.execute(delete(PostCommentLike).where(PostCommentLike.comment_id.in_(comment_ids)))
+    for model in (PostLike, PostComment, PostPollVote, PostSave, PostShare, PostView, PostReport):
+        db.execute(delete(model).where(model.post_id.in_(ids)))
+    db.execute(delete(PostMedia).where(PostMedia.post_id.in_(ids)))
+    db.execute(delete(PostPollOption).where(PostPollOption.post_id.in_(ids)))
+
+    per_author: dict = {}
+    for _post_id, user_id in rows:
+        per_author[user_id] = per_author.get(user_id, 0) + 1
+    db.execute(delete(Post).where(Post.post_id.in_(ids)))
+    for user_id, count in per_author.items():
+        profile = db.execute(select(Profile).where(Profile.user_id == user_id)).scalar_one_or_none()
+        if profile is not None:
+            profile.posts_count = max(0, (profile.posts_count or 0) - count)
+    db.commit()
+    return len(ids)

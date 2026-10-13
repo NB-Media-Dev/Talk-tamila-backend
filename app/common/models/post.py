@@ -87,6 +87,10 @@ class Post(Base):
     # Set when the caption was changed after posting (shows "Edited").
     edited_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
+    # Stable identifier of a demonstration post (see app/utils/seed.py). NULL for every real
+    # post, so demo records can be found, refreshed and removed without guessing.
+    demo_key: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+
     # Song attached to the post (same fields the stories use)
     music_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     music_title: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
@@ -121,6 +125,7 @@ class Post(Base):
         Index("idx_posts_created_at", "created_at"),
         Index("idx_posts_status_scheduled", "status", "scheduled_at"),
         Index("idx_posts_published_at", "published_at", "post_id"),
+        Index("uq_posts_demo_key", "demo_key", unique=True),
     )
 
     @property

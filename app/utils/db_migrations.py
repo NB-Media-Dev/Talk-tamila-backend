@@ -96,6 +96,9 @@ STARTUP_STATEMENTS: tuple[str, ...] = (
     "ALTER TABLE posts ADD COLUMN music_start_time FLOAT NOT NULL DEFAULT 0",
     "ALTER TABLE posts ADD COLUMN music_duration FLOAT NOT NULL DEFAULT 30",
     "CREATE INDEX idx_posts_user_pinned ON posts (user_id, is_pinned, status)",
+    # --- demo posts: stable key so seeding is repeatable and removable (NULL for real posts)
+    "ALTER TABLE posts ADD COLUMN demo_key VARCHAR(64) NULL",
+    "CREATE UNIQUE INDEX uq_posts_demo_key ON posts (demo_key)",
     # Likes, comments, saves, shares, views and reports live in new tables that
     # Base.metadata.create_all() creates by itself.
 )

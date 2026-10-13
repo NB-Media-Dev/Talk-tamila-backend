@@ -42,14 +42,16 @@ def _prepare_database() -> None:
     with SessionLocal() as db:
         ensure_admin_user(db)
 
-    # A few example posts so the feed is not empty the first time (development only, and
-    # only while there are no posts at all). Set SEED_DEMO_POSTS=false in settings to skip it.
-    if not settings.is_production and getattr(settings, "SEED_DEMO_POSTS", True):
+    # Demo posts for presentations (development only). Each post has a stable key, so this
+    # adds only the ones that are missing and never duplicates. Set SEED_DEMO_POSTS=false to
+    # skip it, or use `python -m app.utils.demo_cli` to seed/refresh/remove them by hand
+    # (the only way to seed a production or hosted database).
+    if not settings.is_production and settings.SEED_DEMO_POSTS and "aivencloud.com" not in settings.DATABASE_URL:
         try:
             with SessionLocal() as db:
                 seed_demo_posts(db)
         except Exception:
-            logger.exception("Could not add the example posts")
+            logger.exception("Could not add the demo posts")
 
 
 @asynccontextmanager
