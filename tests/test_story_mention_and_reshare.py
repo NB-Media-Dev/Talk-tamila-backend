@@ -63,7 +63,9 @@ def test_story_mention_and_reshare_chain(client: TestClient, db_session: Session
     story_a_data = res_a.json()
     story_a_id = story_a_data["id"]
 
-    notifs_b = client.get("/api/v1/notifications", headers=headers_b).json()
+    res_notifs_b = client.get("/api/v1/notifications", headers=headers_b)
+    assert res_notifs_b.status_code == 200, res_notifs_b.text
+    notifs_b = res_notifs_b.json()
     mention_b = next((n for n in notifs_b if n["type"] == "STORY_MENTION" and n["reference_id"] == story_a_id), None)
     assert mention_b is not None
     assert f"{user_a.username} mentioned you in their story" in mention_b["message"]

@@ -19,8 +19,7 @@ class Settings(BaseSettings):
     DEBUG: bool = True
 
     DATABASE_URL: str = "mysql+pymysql://root:1234@localhost:3306/talktamila"
-    # Path to the database provider's CA certificate (e.g. Aiven's ca.pem). When set,
-    # the server certificate and hostname are verified.
+   
     DATABASE_SSL_CA: str = ""
 
     SECRET_KEY: str = "dev_secret_key_change_in_production_jwt_9348572849"
@@ -35,24 +34,23 @@ class Settings(BaseSettings):
     SMTP_FROM_EMAIL: str = ""
     SMTP_FROM_NAME: str = "Talk Tamila"
 
-    # Required in production to create the first admin account. Never hard-code it.
+    
     ADMIN_BOOTSTRAP_PASSWORD: str = ""
 
-    # Brevo (transactional email) - used for OTP emails
+   
     BREVO_API_KEY: str = ""
 
     VAPID_PUBLIC_KEY: str = ""
     VAPID_PRIVATE_KEY: str = ""
     VAPID_SUBJECT: str = ""
 
-    # Publishes scheduled posts when their time arrives.
     POST_SCHEDULER_ENABLED: bool = True
     POST_SCHEDULER_INTERVAL_SECONDS: int = 30
 
-    # Login / OTP throttling.
+  
     RATE_LIMIT_ENABLED: bool = True
 
-    # Show /docs, /redoc and the OpenAPI file. Defaults to on outside production.
+   
     ENABLE_DOCS: Optional[bool] = None
 
     BACKEND_CORS_ORIGINS: Union[str, List[str]] = [

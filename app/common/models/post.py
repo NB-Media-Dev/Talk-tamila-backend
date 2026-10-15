@@ -2,7 +2,9 @@ from datetime import datetime, timezone
 from typing import Optional, TYPE_CHECKING
 
 from sqlalchemy import (
+    Boolean,
     DateTime,
+    Float,
     ForeignKey,
     Index,
     Integer,
@@ -21,6 +23,9 @@ if TYPE_CHECKING:
 
 STATUS_PUBLISHED = "published"
 STATUS_SCHEDULED = "scheduled"
+STATUS_ARCHIVED = "archived"
+
+MAX_PINNED_POSTS = 3
 
 
 def _utc_now() -> datetime:
@@ -28,17 +33,30 @@ def _utc_now() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
+def _post_fk():
+    return mapped_column(ForeignKey("posts.post_id", ondelete="CASCADE"), nullable=False)
+
+
+def _user_fk():
+    return mapped_column(ForeignKey("users.user_id", ondelete="CASCADE"), nullable=False)
+
+
+def _created():
+    return mapped_column(DateTime, nullable=False, default=_utc_now)
+
+
+def _flag():
+    return mapped_column(Boolean, nullable=False, default=False, server_default="0")
+
+
 class Post(Base):
     __tablename__ = "posts"
 
     post_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     user_id: Mapped[int] = mapped_column(
-        ForeignKey("users.user_id", ondelete="CASCADE", onupdate="CASCADE"),
-        nullable=False,
+        ForeignKey("users.user_id", ondelete="CASCADE", onupdate="CASCADE"), nullable=False
     )
-    # text | image | video | gif | poll
     post_type: Mapped[str] = mapped_column(String(20), nullable=False, default="text")
-    # Body text, image/video caption, or the poll question.
     content: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     media_type: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
@@ -47,19 +65,33 @@ class Post(Base):
     media_data: Mapped[Optional[bytes]] = mapped_column(
         LargeBinary().with_variant(LONGBLOB(), "mysql"), nullable=True, deferred=True
     )
-
     gif_url: Mapped[Optional[str]] = mapped_column(String(1000), nullable=True)
 
-    # published | scheduled. Scheduled posts are invisible to everyone but admins.
     status: Mapped[str] = mapped_column(
         String(20), nullable=False, default=STATUS_PUBLISHED, server_default=STATUS_PUBLISHED
     )
-    # When a scheduled post should go live (naive UTC). Kept after publishing for history.
     scheduled_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
-    # When the post became visible (naive UTC). NULL while it is still scheduled.
     published_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = _created()
 
-    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now)
+    is_deleted: Mapped[bool] = _flag()
+    is_pinned: Mapped[bool] = _flag()
+    pinned_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    comments_disabled: Mapped[bool] = _flag()
+    hide_like_count: Mapped[bool] = _flag()
+    edited_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
+    music_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    music_title: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    music_artist: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    music_url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    music_thumbnail: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    music_start_time: Mapped[float] = mapped_column(
+        Float, nullable=False, default=0.0, server_default="0"
+    )
+    music_duration: Mapped[float] = mapped_column(
+        Float, nullable=False, default=30.0, server_default="30"
+    )
 
     owner: Mapped["User"] = relationship("User", back_populates="posts", foreign_keys=[user_id])
     poll_options: Mapped[list["PostPollOption"]] = relationship(
@@ -89,9 +121,7 @@ class PostPollOption(Base):
     __tablename__ = "post_poll_options"
 
     option_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    post_id: Mapped[int] = mapped_column(
-        ForeignKey("posts.post_id", ondelete="CASCADE"), nullable=False
-    )
+    post_id: Mapped[int] = _post_fk()
     text: Mapped[str] = mapped_column(String(100), nullable=False)
     position: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
@@ -104,18 +134,123 @@ class PostPollVote(Base):
     __tablename__ = "post_poll_votes"
 
     vote_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    post_id: Mapped[int] = mapped_column(
-        ForeignKey("posts.post_id", ondelete="CASCADE"), nullable=False
-    )
+    post_id: Mapped[int] = _post_fk()
     option_id: Mapped[int] = mapped_column(
         ForeignKey("post_poll_options.option_id", ondelete="CASCADE"), nullable=False
     )
-    user_id: Mapped[int] = mapped_column(
-        ForeignKey("users.user_id", ondelete="CASCADE"), nullable=False
-    )
-    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now)
+    user_id: Mapped[int] = _user_fk()
+    created_at: Mapped[datetime] = _created()
 
     __table_args__ = (
         UniqueConstraint("post_id", "user_id", name="uq_post_poll_votes_post_user"),
         Index("idx_ppv_option_id", "option_id"),
+    )
+
+
+class PostLike(Base):
+    __tablename__ = "post_likes"
+
+    like_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    post_id: Mapped[int] = _post_fk()
+    user_id: Mapped[int] = _user_fk()
+    created_at: Mapped[datetime] = _created()
+
+    __table_args__ = (
+        UniqueConstraint("post_id", "user_id", name="uq_post_likes_post_user"),
+        Index("idx_post_likes_post", "post_id", "like_id"),
+        Index("idx_post_likes_user", "user_id"),
+    )
+
+
+class PostComment(Base):
+    __tablename__ = "post_comments"
+
+    comment_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    post_id: Mapped[int] = _post_fk()
+    user_id: Mapped[int] = _user_fk()
+    parent_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("post_comments.comment_id", ondelete="CASCADE"), nullable=True
+    )
+    body: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = _created()
+
+    __table_args__ = (
+        Index("idx_post_comments_post", "post_id", "parent_id", "comment_id"),
+        Index("idx_post_comments_user", "user_id", "created_at"),
+    )
+
+
+class PostCommentLike(Base):
+    __tablename__ = "post_comment_likes"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    comment_id: Mapped[int] = mapped_column(
+        ForeignKey("post_comments.comment_id", ondelete="CASCADE"), nullable=False
+    )
+    user_id: Mapped[int] = _user_fk()
+    created_at: Mapped[datetime] = _created()
+
+    __table_args__ = (
+        UniqueConstraint("comment_id", "user_id", name="uq_post_comment_likes_pair"),
+        Index("idx_pcl_comment", "comment_id"),
+    )
+
+
+class PostSave(Base):
+    __tablename__ = "post_saves"
+
+    save_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    post_id: Mapped[int] = _post_fk()
+    user_id: Mapped[int] = _user_fk()
+    created_at: Mapped[datetime] = _created()
+
+    __table_args__ = (
+        UniqueConstraint("post_id", "user_id", name="uq_post_saves_post_user"),
+        Index("idx_post_saves_user", "user_id", "save_id"),
+    )
+
+
+class PostShare(Base):
+    __tablename__ = "post_shares"
+
+    share_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    post_id: Mapped[int] = _post_fk()
+    user_id: Mapped[int] = _user_fk()
+    channel: Mapped[str] = mapped_column(String(20), nullable=False, default="link")
+    created_at: Mapped[datetime] = _created()
+
+    __table_args__ = (
+        UniqueConstraint("post_id", "user_id", name="uq_post_shares_post_user"),
+        Index("idx_post_shares_post", "post_id"),
+    )
+
+
+class PostView(Base):
+    """One row per person who saw the post. Powers the reach number in insights."""
+
+    __tablename__ = "post_views"
+
+    view_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    post_id: Mapped[int] = _post_fk()
+    user_id: Mapped[int] = _user_fk()
+    created_at: Mapped[datetime] = _created()
+
+    __table_args__ = (
+        UniqueConstraint("post_id", "user_id", name="uq_post_views_post_user"),
+        Index("idx_post_views_post", "post_id"),
+    )
+
+
+class PostReport(Base):
+    __tablename__ = "post_reports"
+
+    report_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    post_id: Mapped[int] = _post_fk()
+    reporter_id: Mapped[int] = _user_fk()
+    reason: Mapped[str] = mapped_column(String(50), nullable=False)
+    created_at: Mapped[datetime] = _created()
+
+    __table_args__ = (
+        UniqueConstraint("post_id", "reporter_id", name="uq_post_reports_pair"),
+        Index("idx_post_reports_post", "post_id"),
     )

@@ -65,7 +65,15 @@ STARTUP_STATEMENTS: tuple[str, ...] = (
     "ALTER TABLE direct_messages ADD COLUMN story_id INT NULL",
     "ALTER TABLE direct_messages ADD CONSTRAINT fk_direct_messages_story "
     "FOREIGN KEY (story_id) REFERENCES stories(story_id) ON DELETE SET NULL",
-    # --- posts: columns older databases may be missing
+    # --- posts: columns older databases may be missing or need defaults
+    "ALTER TABLE posts MODIFY COLUMN views_count INT NOT NULL DEFAULT 0",
+    "ALTER TABLE posts MODIFY COLUMN likes_count INT NOT NULL DEFAULT 0",
+    "ALTER TABLE posts MODIFY COLUMN comments_count INT NOT NULL DEFAULT 0",
+    "ALTER TABLE posts MODIFY COLUMN shares_count INT NOT NULL DEFAULT 0",
+    "ALTER TABLE posts MODIFY COLUMN media_type VARCHAR(50) NULL DEFAULT NULL",
+    "ALTER TABLE posts MODIFY COLUMN audience VARCHAR(50) NOT NULL DEFAULT 'PUBLIC'",
+    "ALTER TABLE posts MODIFY COLUMN saves_count INT NOT NULL DEFAULT 0",
+    "ALTER TABLE posts MODIFY COLUMN is_deleted TINYINT(1) NOT NULL DEFAULT 0",
     "ALTER TABLE posts ADD COLUMN post_type VARCHAR(20) NOT NULL DEFAULT 'text'",
     "ALTER TABLE posts ADD COLUMN content TEXT NULL",
     "ALTER TABLE posts ADD COLUMN media_type VARCHAR(20) NULL",
@@ -80,7 +88,30 @@ STARTUP_STATEMENTS: tuple[str, ...] = (
     "UPDATE posts SET published_at = created_at WHERE status = 'published' AND published_at IS NULL",
     "CREATE INDEX idx_posts_status_scheduled ON posts (status, scheduled_at)",
     "CREATE INDEX idx_posts_published_at ON posts (published_at, post_id)",
+    # --- posts: owner controls and music
+    "ALTER TABLE posts ADD COLUMN is_pinned TINYINT(1) NOT NULL DEFAULT 0",
+    "ALTER TABLE posts ADD COLUMN pinned_at DATETIME NULL",
+    "ALTER TABLE posts ADD COLUMN comments_disabled TINYINT(1) NOT NULL DEFAULT 0",
+    "ALTER TABLE posts ADD COLUMN hide_like_count TINYINT(1) NOT NULL DEFAULT 0",
+    "ALTER TABLE posts ADD COLUMN edited_at DATETIME NULL",
+    "ALTER TABLE posts ADD COLUMN music_id INT NULL",
+    "ALTER TABLE posts ADD COLUMN music_title VARCHAR(255) NULL",
+    "ALTER TABLE posts ADD COLUMN music_artist VARCHAR(255) NULL",
+    "ALTER TABLE posts ADD COLUMN music_url TEXT NULL",
+    "ALTER TABLE posts ADD COLUMN music_thumbnail TEXT NULL",
+    "ALTER TABLE posts ADD COLUMN music_start_time FLOAT NOT NULL DEFAULT 0.0",
+    "ALTER TABLE posts ADD COLUMN music_duration FLOAT NOT NULL DEFAULT 30.0",
+    # --- post comment likes
+    "CREATE TABLE IF NOT EXISTS post_comment_likes ("
+    "    id INT AUTO_INCREMENT PRIMARY KEY,"
+    "    comment_id INT NOT NULL,"
+    "    user_id INT NOT NULL,"
+    "    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,"
+    "    UNIQUE KEY uq_post_comment_likes_pair (comment_id, user_id),"
+    "    KEY idx_pcl_comment (comment_id)"
+    ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
 )
+
 
 
 def _error_code(exc: DBAPIError) -> int:

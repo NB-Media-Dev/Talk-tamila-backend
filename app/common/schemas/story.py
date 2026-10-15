@@ -50,6 +50,7 @@ class StorySlideResponse(BaseModel):
     original_username: Optional[str] = None
     is_reshare: bool = False
     can_reshare: bool = False
+    already_reshared: bool = False
     mentions: List[StoryMentionItem] = []
     status: str = "active"
     model_config = ConfigDict(from_attributes=True)
@@ -105,6 +106,7 @@ class StoryItemResponse(BaseModel):
     original_user: Optional[StoryUserResponse] = None
     is_reshare: bool = False
     can_reshare: bool = False
+    already_reshared: bool = False
     mentions: List[StoryMentionItem] = []
     status: str = "active"
     model_config = ConfigDict(from_attributes=True)

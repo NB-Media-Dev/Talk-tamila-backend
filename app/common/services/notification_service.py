@@ -1,6 +1,5 @@
 """
 Notification service — returns active notifications merged with unread DMs.
-Automatically prunes stale notifications (unliked stories, unsent DMs, unfollows).
 """
 import re
 from datetime import datetime, timezone
@@ -13,9 +12,6 @@ from app.common.models.social import Notification, Follow
 from app.common.models.story import Story, StoryLike
 from app.common.models.user import User
 from app.common.schemas.social import NotificationResponse
-from app.common.models.messaging import DirectMessage, MESSAGE_KIND_CALL, ChatState
-from app.common.models.story import Story, StoryLike
-from app.common.models.user import User
 
 
 def _utc_now_iso() -> str:
@@ -30,30 +26,15 @@ def _iso(dt: Optional[datetime]) -> str:
 
 
 def _uname(msg: Optional[str]) -> Optional[str]:
-    m = re.match(r"^([A-Za-z0-9_]+)", (msg or "").strip())
-    return m.group(1).lower() if m else None
-
-
-def _utc_now_iso() -> str:
-    return f"{datetime.now(timezone.utc).replace(tzinfo=None).isoformat()}Z"
-
-
-def _iso(dt: Optional[datetime]) -> str:
-    if not dt:
-        return ""
-    s = dt.isoformat()
-    return s if s.endswith("Z") or ("+" in s or "-" in s[10:]) else f"{s}Z"
-
-
-def _uname(msg: Optional[str]) -> Optional[str]:
-    m = re.match(r"^([A-Za-z0-9_]+)", (msg or "").strip())
+    if not msg:
+        return None
+    m = re.match(r"^@?([A-Za-z0-9_]+)", msg.strip())
     return m.group(1).lower() if m else None
 
 
 class NotificationService:
     @staticmethod
     def get_user_notifications(user_id: int, db: Session, limit: int = 50) -> List[NotificationResponse]:
-       
         raw_notifs = (
             db.query(Notification)
             .filter(Notification.user_id == user_id)
@@ -64,14 +45,11 @@ class NotificationService:
 
         dm_ids: Set[int] = {n.reference_id for n in raw_notifs if n.reference_id and n.type in ("new_message", "story_reply", "story_react")}
         story_ids: Set[int] = {n.reference_id for n in raw_notifs if n.reference_id and n.type in ("story_like", "story_reply", "story_react", "story_share", "STORY_MENTION", "STORY_SHARED", "story_mention", "story_shared")}
-        post_ids: Set[int] = {n.reference_id for n in raw_notifs if n.reference_id and n.type in ("post_like", "post_comment", "post_comment_reply", "post_mention", "post", "like", "comment")}
+        post_ids: Set[int] = {n.reference_id for n in raw_notifs if n.reference_id and n.type in ("post_like", "post_comment", "post_comment_reply", "post_mention", "POST_MENTION", "post", "like", "comment", "post_share", "comment_like")}
         follower_ids: Set[int] = {n.reference_id for n in raw_notifs if n.reference_id and n.type == "follow"}
         unames: Set[str] = {_uname(n.message) for n in raw_notifs if _uname(n.message)}
 
-
         dms = {d.id: d for d in db.execute(select(DirectMessage).where(DirectMessage.id.in_(dm_ids))).scalars().all()} if dm_ids else {}
-        stories = {s for s in db.execute(select(Story.story_id).where(Story.story_id.in_(story_ids), Story.is_deleted == False)).scalars().all()} if story_ids else set()
-        posts = {p for p in db.execute(select(Post.post_id).where(Post.post_id.in_(post_ids), Post.is_deleted == False)).scalars().all()} if post_ids else set()
         follows = set(db.execute(select(Follow.follower_id).where(Follow.follower_id.in_(follower_ids), Follow.following_id == user_id)).scalars().all()) if follower_ids else set()
 
         likes: Set = set()
@@ -80,7 +58,18 @@ class NotificationService:
                 if lby: likes.add((sid, lby.lower()))
                 if uid: likes.add((sid, uid))
 
+        warning_ids: Set[int] = {
+            n.reference_id for n in raw_notifs
+            if n.reference_id and (
+                n.type in ("story_warning", "admin_warning", "warning")
+                or "admin warning" in (n.message or "").lower()
+                or "warning" in (n.type or "").lower()
+            )
+        }
+
         candidate_uids = set(follower_ids)
+        if warning_ids:
+            candidate_uids.update(warning_ids)
         if dms:
             candidate_uids.update(d.sender_id for d in dms.values())
         if dm_ids:
@@ -95,6 +84,7 @@ class NotificationService:
                 if u.username: users_by_name[u.username.lower()] = u
                 users_by_id[u.user_id] = u
 
+        admin_fallback = db.execute(select(User).where(User.role == "admin").order_by(User.user_id.asc())).scalars().first()
 
         stale_ids, active_notifs = [], []
         for n in raw_notifs:
@@ -104,13 +94,11 @@ class NotificationService:
 
             active = True
             if n.type == "story_like":
-                active = n.reference_id in stories and ((n.reference_id, un) in likes or (n.reference_id, uid) in likes)
+               
+                if un or uid:
+                    active = (n.reference_id, un) in likes or (n.reference_id, uid) in likes
             elif n.type == "new_message":
                 active = n.reference_id is None or n.reference_id in dms
-            elif n.type in ("story_reply", "story_react", "story_share", "STORY_MENTION", "STORY_SHARED", "story_mention", "story_shared"):
-                active = n.reference_id in stories or (n.reference_id in dms)
-            elif n.type in ("post_like", "post_comment", "post_comment_reply", "post_mention", "post", "like", "comment"):
-                active = n.reference_id is None or n.reference_id in posts
             elif n.type == "follow":
                 active = n.reference_id in follows
 
@@ -131,24 +119,35 @@ class NotificationService:
         result: List[NotificationResponse] = []
         for n, u in active_notifs:
             dm = dms.get(n.reference_id)
-            actor = (
-                (users_by_id.get(dm.sender_id) if dm else None)
-                or (users_by_id.get(n.reference_id) if (n.type in ("follow", "new_message", "message_react") and n.reference_id in users_by_id) else None)
-                or u
+            is_warning = (
+                n.type in ("story_warning", "admin_warning", "warning")
+                or "warning" in (n.type or "").lower()
+                or "admin warning" in (n.message or "").lower()
             )
+            if is_warning:
+                actor = (
+                    (users_by_id.get(n.reference_id) if n.reference_id in users_by_id else None)
+                    or admin_fallback
+                    or u
+                )
+            else:
+                actor = (
+                    (users_by_id.get(dm.sender_id) if dm else None)
+                    or (users_by_id.get(n.reference_id) if (n.type in ("follow", "new_message", "message_react") and n.reference_id in users_by_id) else None)
+                    or u
+                )
             result.append(NotificationResponse(
                 id=n.id,
                 user_id=n.user_id,
                 type=n.type,
                 message=n.message,
-                reference_id=n.reference_id,
+                reference_id=actor.user_id if (is_warning and actor) else n.reference_id,
                 is_read=n.is_read,
                 created_at=_iso(n.created_at),
                 actor_id=actor.user_id if actor else None,
                 actor_username=actor.username if actor else None,
             ))
 
-    
         unread_dms = (
             db.query(DirectMessage)
             .filter(DirectMessage.receiver_id == user_id, DirectMessage.read_at.is_(None), DirectMessage.kind != MESSAGE_KIND_CALL)
@@ -189,6 +188,5 @@ class NotificationService:
                 actor_username=sender.username if sender else None,
             ))
 
-       
         result.sort(key=lambda n: n.created_at, reverse=True)
         return result[:limit]

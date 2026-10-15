@@ -122,6 +122,7 @@ class AdminService:
                     full_name=s.owner.full_name,
                     role=s.owner.role,
                     verified=s.owner.role in ("influencer", "admin"),
+                    is_active=bool(s.owner.is_active),
                 )
 
             views_c = db.query(func.count(StoryView.view_id)).filter(StoryView.story_id == s.story_id).scalar() or 0
@@ -183,11 +184,11 @@ class AdminService:
                         id=creator.id,
                         user_id=creator.id,
                         username=creator.username,
-                        avatar=getattr(creator, "profile_pic_url", None),
-                        avatar_url=getattr(creator, "profile_pic_url", None),
+                        avatar=creator.avatar_url or getattr(creator, "profile_pic_url", None),
+                        avatar_url=creator.avatar_url or getattr(creator, "profile_pic_url", None),
                         full_name=creator.full_name,
                         role=creator.role,
-                        verified=True,
+                        verified=creator.role in ("influencer", "admin"),
                         is_active=bool(creator.is_active),
                     )
                 story_item = AdminStoryItem(
@@ -289,7 +290,7 @@ class AdminService:
         if not recipient:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Recipient user not found")
 
-        warning_body = f" [Official Admin Warning - Story #{story_id}]\n\n{message.strip()}"
+        warning_body = f" [Official Admin Warning]\n\n{message.strip()}"
         dm = DirectMessage(
             sender_id=current_admin.user_id,
             receiver_id=recipient_id,
@@ -299,12 +300,12 @@ class AdminService:
         )
         db.add(dm)
 
-        notif_msg = f" Admin Warning regarding Story #{story_id}: {message.strip()[:140]}"
+        notif_msg = f" Admin Warning: {message.strip()[:140]}"
         notif = Notification(
             user_id=recipient_id,
             type="story_warning",
             message=notif_msg,
-            reference_id=story_id,
+            reference_id=current_admin.user_id,
             is_read=False,
         )
         db.add(notif)
@@ -313,10 +314,62 @@ class AdminService:
 
         return {
             "success": True,
-            "message": f"Warning message sent to @{recipient.username or recipient_id} regarding Story #{story_id}.",
+            "message": f"Warning message sent to @{recipient.username or 'user'}.",
             "story_id": story_id,
             "user_id": recipient_id,
             "dm_id": dm.id,
             "warning_type": warning_type or "warning",
         }
+
+    @staticmethod
+    def warn_user(
+        user_id: int,
+        message: str,
+        current_admin: User,
+        db: Session,
+        story_id: Optional[int] = None,
+        warning_type: Optional[str] = "warning",
+    ) -> dict:
+        if not message or not message.strip():
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Warning message cannot be empty.",
+            )
+
+        recipient = db.get(User, user_id)
+        if not recipient:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
+        warning_body = f" [Official Admin Warning]\n\n{message.strip()}"
+        dm = DirectMessage(
+            sender_id=current_admin.user_id,
+            receiver_id=user_id,
+            body=warning_body,
+            kind="text",
+            story_id=story_id,
+        )
+        db.add(dm)
+
+        notif_msg = f" Admin Warning: {message.strip()[:140]}"
+        notif = Notification(
+            user_id=user_id,
+            type="admin_warning",
+            message=notif_msg,
+            reference_id=current_admin.user_id,
+            is_read=False,
+        )
+        db.add(notif)
+        db.commit()
+        db.refresh(dm)
+
+        return {
+            "success": True,
+            "message": f"Warning message sent to @{recipient.username or 'user'}.",
+            "story_id": story_id,
+            "user_id": user_id,
+            "dm_id": dm.id,
+            "warning_type": warning_type or "warning",
+        }
+
+
 

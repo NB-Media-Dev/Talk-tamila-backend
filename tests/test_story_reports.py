@@ -50,3 +50,36 @@ def test_report_story_with_reason_and_details(
     assert matched_report["details"] == "This story contains inappropriate harassment targeting individuals."
     assert matched_report["story"] is not None
     assert matched_report["story"]["story_id"] == story_id
+
+    # 5. Admin sends warning to creator
+    creator_user_id = matched_report["story"]["user_id"]
+    warn_res = client.post(
+        f"/api/v1/admin/stories/{story_id}/warn",
+        json={"message": "Please do not post harassing content. This is your first warning."},
+        headers=admin_auth_headers,
+    )
+    assert warn_res.status_code == 200
+    warn_data = warn_res.json()
+    assert warn_data["success"] is True
+    assert warn_data["story_id"] == story_id
+    assert warn_data["user_id"] == creator_user_id
+
+    # 6. Admin suspends (bans) user
+    ban_res = client.post(f"/api/v1/admin/users/{creator_user_id}/ban", headers=admin_auth_headers)
+    assert ban_res.status_code == 200
+    assert ban_res.json()["success"] is True
+
+    # 7. Admin unsuspends (unbans) user
+    unban_res = client.post(f"/api/v1/admin/users/{creator_user_id}/unban", headers=admin_auth_headers)
+    assert unban_res.status_code == 200
+    assert unban_res.json()["success"] is True
+
+    # 8. Admin deletes story
+    del_res = client.delete(f"/api/v1/admin/stories/{story_id}", headers=admin_auth_headers)
+    assert del_res.status_code == 200
+    assert del_res.json()["success"] is True
+
+    # 9. Admin restores story
+    res_res = client.patch(f"/api/v1/admin/stories/{story_id}/restore", headers=admin_auth_headers)
+    assert res_res.status_code == 200
+    assert res_res.json()["success"] is True

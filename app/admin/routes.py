@@ -9,6 +9,8 @@ from app.admin.schemas import (
     AdminPlatformStoryStats,
     AdminStoryItem,
     AdminReportItem,
+    AdminWarnRequest,
+    AdminWarnResponse,
 )
 from app.common.schemas.story import (
     StoryCreateRequest,
@@ -109,6 +111,7 @@ def admin_restore_story(
 
 
 @router.patch("/users/{user_id:int}/ban")
+@router.post("/users/{user_id:int}/ban")
 def admin_ban_user(
     user_id: int,
     current_admin: User = Depends(get_current_admin),
@@ -118,9 +121,47 @@ def admin_ban_user(
 
 
 @router.patch("/users/{user_id:int}/unban")
+@router.post("/users/{user_id:int}/unban")
 def admin_unban_user(
     user_id: int,
     current_admin: User = Depends(get_current_admin),
     db: Session = Depends(get_db),
 ) -> dict:
     return AdminService.unban_user(user_id, db)
+
+
+@router.post("/stories/{story_id:int}/warn", response_model=AdminWarnResponse)
+def admin_warn_story_creator(
+    story_id: int,
+    payload: AdminWarnRequest,
+    current_admin: User = Depends(get_current_admin),
+    db: Session = Depends(get_db),
+) -> AdminWarnResponse:
+    result = AdminService.warn_story_creator(
+        story_id=story_id,
+        message=payload.message,
+        current_admin=current_admin,
+        db=db,
+        target_user_id=payload.target_user_id,
+        warning_type=payload.warning_type,
+    )
+    return AdminWarnResponse(**result)
+
+
+@router.post("/users/{user_id:int}/warn", response_model=AdminWarnResponse)
+def admin_warn_user(
+    user_id: int,
+    payload: AdminWarnRequest,
+    current_admin: User = Depends(get_current_admin),
+    db: Session = Depends(get_db),
+) -> AdminWarnResponse:
+    result = AdminService.warn_user(
+        user_id=user_id,
+        message=payload.message,
+        current_admin=current_admin,
+        db=db,
+        story_id=payload.story_id,
+        warning_type=payload.warning_type,
+    )
+    return AdminWarnResponse(**result)
+

@@ -164,3 +164,29 @@ def test_posts_count_follows_create_and_delete(client: TestClient, admin_auth_he
     client.delete(f"/api/v1/posts/{pid}", headers=admin_auth_headers)
     db_session.expire_all()
     assert db_session.get(User, 1).profile.posts_count == start
+
+
+def test_post_share_deduplication(client: TestClient, admin_auth_headers, influencer_auth_headers):
+    pid = _create(client, admin_auth_headers, post_type="text", content="share test").json()["items"][0]["post_id"]
+    
+    # First share by admin
+    r1 = client.post(f"/api/v1/posts/{pid}/share", json={"channel": "link"}, headers=admin_auth_headers)
+    assert r1.status_code == 200
+    assert r1.json()["share_count"] == 1
+
+    # Second share by same user (admin) should NOT increment duplicate share count
+    r2 = client.post(f"/api/v1/posts/{pid}/share", json={"channel": "link"}, headers=admin_auth_headers)
+    assert r2.status_code == 200
+    assert r2.json()["share_count"] == 1
+
+    # Third share by another user (influencer) should increment to 2
+    r3 = client.post(f"/api/v1/posts/{pid}/share", json={"channel": "link"}, headers=influencer_auth_headers)
+    assert r3.status_code == 200
+    assert r3.json()["share_count"] == 2
+
+    # Check post shows shared_by_me correctly
+    post_res = client.get(f"/api/v1/posts/{pid}", headers=admin_auth_headers).json()
+    post_item = post_res["items"][0]
+    assert post_item["share_count"] == 2
+    assert post_item["shared_by_me"] is True
+

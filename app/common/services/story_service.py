@@ -473,6 +473,7 @@ def build_story_item(
     is_reshare = bool(story.parent_story_id or (story.original_story_id and story.original_story_id != story.story_id))
 
     can_reshare = False
+    already_reshared = False
     if current_user_id and current_user_id != story.user_id and is_active:
         is_mentioned = any(m.mentioned_user_id == current_user_id for m in mentions_data)
         if is_mentioned:
@@ -482,11 +483,17 @@ def build_story_item(
                 or_(
                     Story.parent_story_id == story.story_id,
                     Story.original_story_id == orig_id,
+                    Story.original_story_id == story.story_id,
                 ),
                 Story.is_deleted == False,
                 Story.expires_at > now_naive,
             ).first()
-            can_reshare = (existing_active is None)
+            if existing_active is not None:
+                already_reshared = True
+                can_reshare = False
+            else:
+                already_reshared = False
+                can_reshare = True
 
     return StoryItemResponse(
         story_id=story.story_id,
@@ -525,6 +532,7 @@ def build_story_item(
         original_user=original_owner_data,
         is_reshare=is_reshare,
         can_reshare=can_reshare,
+        already_reshared=already_reshared,
         mentions=mentions_data,
         status=story.status or ("deleted" if story.is_deleted else ("expired" if not is_active else "active")),
     )
@@ -573,6 +581,7 @@ def story_to_slide(story_item: StoryItemResponse, creator_name: str) -> StorySli
         original_username=story_item.original_username,
         is_reshare=story_item.is_reshare,
         can_reshare=story_item.can_reshare,
+        already_reshared=story_item.already_reshared,
         mentions=story_item.mentions,
         status=story_item.status,
     )
@@ -2049,13 +2058,11 @@ class StoryService:
         existing = db.query(StoryMention).filter(
             StoryMention.story_id == story.story_id,
             StoryMention.mentioned_user_id == mentioned_user_id,
-            StoryMention.created_by_user_id == current_user.id,
         ).first()
         if existing:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"You have already mentioned @{target.username}. "
-                    
+                detail=f"@{target.username} has already been mentioned in this story slide.",
             )
 
         mention = StoryMention(

@@ -78,7 +78,6 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.BACKEND_CORS_ORIGINS,
-    # The local-network regex is for development only.
     allow_origin_regex=None if settings.is_production else (settings.CORS_ORIGIN_REGEX or None),
     allow_credentials=True,
     allow_methods=["*"],
@@ -105,12 +104,11 @@ def health_check() -> dict:
     return {"status": "ok"}
 
 
-# Every router is mounted exactly once, under /api/v1.
 for _router in (
     auth_router,
+    notification_router,
     story_router,
     story_settings_router,
-    notification_router,
     message_router,
     calls_router,
     post_router,
