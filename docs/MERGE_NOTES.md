@@ -64,3 +64,12 @@ Kept from your version: the posts grid, Discover people, the followers/following
 Not copied from the dump, because it was sample text for one person (Karthik) shown to everyone: the name, bio, hashtags, `Top 1% Chennai`, `142 Bounties Done`, audience 482,400, reach 1.28M, score 94/100, revenue and wallet figures, the HDFC and UPI details, the fake IP/2FA line, and the toggles that did nothing. These now show real profile data, or zero / empty states where no backend exists (wallet, payouts).
 
 The wallet buttons link to the existing `/{role}/withdraw` screen. `Add A/C` opens the `Changeaccount` form, which does not save anywhere yet.
+
+
+## Edit profile redesign (from project_code.txt)
+
+`components/profile/EditProfile.tsx` now uses the dump's edit-profile design: modal card, header with pencil badge, banner + avatar block, rounded orange-accent fields, bio counter with "Clean Up Bio", and a footer with the "Unsaved changes" indicator and Save Changes. It is used by `/admin|/influencer|/freelancer/profile/edit` (the route files are unchanged).
+
+Kept from the working version: loading the real profile, validation, the photo editor (`AvatarEditor`), saving through `userService.updateProfile`, syncing the signed-in user, and Change Password with the email code.
+
+Not copied, because the backend has nowhere to store them and the dump filled them with sample data for one person: Tamil name, primary creator title, topic tags, neighborhood, the banner upload, the "Gold Creator" badge, and the hard-coded name/handle/bio. Fields: first name, last name, username (the dump's "Creator Handle"), bio, location, email, phone.
