@@ -1,4 +1,3 @@
-import pytest
 from starlette.testclient import TestClient
 from app.common.models.story import StoryReport
 

@@ -7,10 +7,8 @@ from sqlalchemy.orm import Session
 
 from app.common.models.user import User
 from app.common.schemas.messaging import MessageCreate, ReactionRequest
-from app.common.services import push_service
 from app.common.services.message_service import MessageService
 from app.common.services.push_service import PushService
-from app.core.config import settings
 from app.core.dependencies import get_current_user, get_db
 
 router = APIRouter(prefix="/messages", tags=["Messages"])
@@ -34,22 +32,22 @@ class PushUnsubscribeRequest(BaseModel):
 
 
 @router.get("/summary")
-def summary(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> dict:
+def get_summary(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> dict:
     """Tiny payload polled by the navbar badge and the inbox."""
-    return MessageService.summary(db, current_user)
+    return MessageService.get_summary(db, current_user)
 
 
 @router.get("/conversations")
-def conversations(
+def list_conversations(
     limit: int = Query(100, ge=1, le=200),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> list[dict]:
-    return MessageService.conversations(db, current_user, limit)
+    return MessageService.list_conversations(db, current_user, limit)
 
 
 @router.get("/users")
-def people(
+def search_people(
     q: str = Query("", max_length=100),
     limit: int = Query(30, ge=1, le=50),
     offset: int = Query(0, ge=0),
@@ -70,7 +68,7 @@ def get_thread(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> dict:
-    return MessageService.thread(
+    return MessageService.get_thread(
         db, current_user, user_id, after_id, before_id, limit, sync_from_id
     )
 
@@ -84,7 +82,7 @@ def send_message(
     db: Session = Depends(get_db),
     x_push_endpoint: Optional[str] = Header(default=None),
 ) -> dict:
-    message = MessageService.send(db, current_user, user_id, payload.body)
+    message = MessageService.send_message(db, current_user, user_id, payload.body)
     background_tasks.add_task(PushService.notify_new_message, message["id"], x_push_endpoint)
     return message
 
@@ -95,7 +93,7 @@ def mark_thread_read(
     db: Session = Depends(get_db),
 ) -> dict:
     """Mark this conversation as read from the inbox 3-dot menu (no need to open it)."""
-    return MessageService.mark_read(db, current_user, user_id)
+    return MessageService.mark_thread_read(db, current_user, user_id)
 
 @router.post("/thread/{user_id}/unread")
 def mark_thread_unread(
@@ -104,7 +102,7 @@ def mark_thread_unread(
     db: Session = Depends(get_db),
 ) -> dict:
     """Mark this conversation as unread from the inbox 3-dot menu."""
-    return MessageService.mark_unread(db, current_user, user_id)
+    return MessageService.mark_thread_unread(db, current_user, user_id)
 
 @router.post("/thread/{user_id}/accept")
 def accept_message_request(
@@ -113,7 +111,7 @@ def accept_message_request(
     db: Session = Depends(get_db),
 ) -> dict:
     """Accept a message request: the chat moves from Requests to the main inbox."""
-    return MessageService.accept_request(db, current_user, user_id)
+    return MessageService.accept_message_request(db, current_user, user_id)
 
 @router.delete("/thread/{user_id}")
 def delete_thread(
@@ -122,7 +120,7 @@ def delete_thread(
     db: Session = Depends(get_db),
 ) -> dict:
     """Delete this chat for me only (Instagram-style). The other person keeps theirs."""
-    return MessageService.delete_chat(db, current_user, user_id)
+    return MessageService.delete_thread(db, current_user, user_id)
 
 @router.post("/thread/{user_id}/block")
 def block_user(
@@ -131,7 +129,7 @@ def block_user(
     db: Session = Depends(get_db),
 ) -> dict:
     """Block this person: neither of you can message or call the other."""
-    return MessageService.block(db, current_user, user_id)
+    return MessageService.block_user(db, current_user, user_id)
 
 @router.delete("/thread/{user_id}/block")
 def unblock_user(
@@ -139,7 +137,7 @@ def unblock_user(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> dict:
-    return MessageService.unblock(db, current_user, user_id)
+    return MessageService.unblock_user(db, current_user, user_id)
 
 @router.post("/thread/{user_id}/mute")
 def mute_chat(
@@ -148,7 +146,7 @@ def mute_chat(
     db: Session = Depends(get_db),
 ) -> dict:
     """Mute this chat: it stops counting in the unread badge."""
-    return MessageService.mute(db, current_user, user_id)
+    return MessageService.mute_chat(db, current_user, user_id)
 
 @router.delete("/thread/{user_id}/mute")
 def unmute_chat(
@@ -156,7 +154,7 @@ def unmute_chat(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> dict:
-    return MessageService.unmute(db, current_user, user_id)
+    return MessageService.unmute_chat(db, current_user, user_id)
 
 @router.post("/thread/{user_id}/report", status_code=status.HTTP_201_CREATED)
 def report_user(
@@ -165,7 +163,7 @@ def report_user(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> dict:
-    return MessageService.report(db, current_user, user_id, payload.reason)
+    return MessageService.report_user(db, current_user, user_id, payload.reason)
 
 @router.put("/{message_id}/reaction")
 def react_to_message(
@@ -175,7 +173,7 @@ def react_to_message(
     db: Session = Depends(get_db),
 ) -> dict:
     """React to any message in one of my chats - sent or received. Replaces my previous reaction."""
-    return MessageService.react(db, current_user, message_id, payload.emoji)
+    return MessageService.react_to_message(db, current_user, message_id, payload.emoji)
 
 @router.delete("/{message_id}/reaction")
 def remove_message_reaction(
@@ -183,7 +181,7 @@ def remove_message_reaction(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> dict:
-    return MessageService.unreact(db, current_user, message_id)
+    return MessageService.remove_message_reaction(db, current_user, message_id)
 
 @router.delete("/{message_id}")
 def unsend_message(
@@ -192,15 +190,11 @@ def unsend_message(
     db: Session = Depends(get_db),
 ) -> dict:
     """Unsend (delete for everyone) a message I sent."""
-    return MessageService.unsend(db, current_user, message_id)
+    return MessageService.unsend_message(db, current_user, message_id)
 
 @router.get("/push/public-key")
 def push_public_key(current_user: User = Depends(get_current_user)) -> dict:
-    """The website asks this before offering "Turn on notifications"."""
-    return {
-        "enabled": push_service.is_configured(),
-        "public_key": settings.VAPID_PUBLIC_KEY if push_service.is_configured() else "",
-    }
+    return PushService.push_public_key()
 
 @router.post("/push/subscribe", status_code=status.HTTP_201_CREATED)
 def push_subscribe(
@@ -208,12 +202,7 @@ def push_subscribe(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> dict:
-    """Save this browser so it receives message notifications for the logged-in user."""
-    if not push_service.is_configured():
-        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "Notifications are not set up on the server.")
-    if not push_service.is_allowed_endpoint(payload.endpoint):
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Unsupported notification address.")
-    PushService.subscribe(db, current_user, payload.endpoint, payload.keys.p256dh, payload.keys.auth)
+    PushService.push_subscribe(db, current_user, payload.endpoint, payload.keys.p256dh, payload.keys.auth)
     return {"success": True}
 
 @router.post("/push/unsubscribe")
@@ -224,4 +213,4 @@ async def push_unsubscribe(request: Request, db: Session = Depends(get_db)) -> d
         data = PushUnsubscribeRequest(**json.loads(raw or b"{}"))
     except (ValueError, TypeError, ValidationError):
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Invalid request.")
-    return {"success": True, "removed": PushService.unsubscribe(db, data.endpoint)}
+    return {"success": True, "removed": PushService.push_unsubscribe(db, data.endpoint)}

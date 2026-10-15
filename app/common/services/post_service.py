@@ -401,7 +401,7 @@ class PostService:
         return PostService._build_feed(db, rows[:limit], viewer, has_more=has_more)
 
     @staticmethod
-    def get_user_posts(
+    def get_user_public_posts(
         username_or_id: str,
         db: Session,
         current_user: User,
@@ -457,7 +457,7 @@ class PostService:
         return PostService._build_feed(db, rows[:limit], current_user, has_more=has_more)
 
     @staticmethod
-    def get_one(db: Session, viewer: User, post_id: int) -> FeedResponse:
+    def get_one_post(db: Session, viewer: User, post_id: int) -> FeedResponse:
         """One post, for shared links and notifications."""
         PostService._publish_due_safely(db)
         post = db.get(Post, post_id)
@@ -479,7 +479,7 @@ class PostService:
         return PostService._build_feed(db, [post], viewer, has_more=False)
 
     @staticmethod
-    def get_saved(db: Session, viewer: User, limit: int = 30, offset: int = 0) -> FeedResponse:
+    def list_saved_posts(db: Session, viewer: User, limit: int = 30, offset: int = 0) -> FeedResponse:
         """Posts the viewer saved, most recently saved first."""
         limit, offset = _page(limit, offset)
         blocked = list(PostEngagementService.blocked_ids(db, viewer.user_id))
@@ -504,7 +504,7 @@ class PostService:
         return PostService._build_feed(db, rows[:limit], viewer, has_more=has_more)
 
     @staticmethod
-    def get_archived(db: Session, viewer: User, limit: int = 30, offset: int = 0) -> FeedResponse:
+    def list_archived_posts(db: Session, viewer: User, limit: int = 30, offset: int = 0) -> FeedResponse:
         """The viewer's own archived posts."""
         limit, offset = _page(limit, offset)
         rows = list(
@@ -526,7 +526,7 @@ class PostService:
         return PostService._build_feed(db, rows[:limit], viewer, has_more=has_more)
 
     @staticmethod
-    def list_scheduled(
+    def list_scheduled_posts(
         db: Session,
         viewer: User,
         limit: int,
@@ -738,7 +738,7 @@ class PostService:
         return post
 
     @staticmethod
-    def reschedule(db: Session, user: User, post_id: int, new_time: datetime) -> FeedResponse:
+    def reschedule_post(db: Session, user: User, post_id: int, new_time: datetime) -> FeedResponse:
         """Change the publish time of a scheduled post. `new_time` must be timezone-aware."""
         when = validate_schedule_window(to_utc_naive(new_time))
         PostService._get_scheduled_or_error(db, post_id)
@@ -754,7 +754,7 @@ class PostService:
         return PostService._single(db, user, post_id)
 
     @staticmethod
-    def publish_now(db: Session, user: User, post_id: int) -> FeedResponse:
+    def publish_post_now(db: Session, user: User, post_id: int) -> FeedResponse:
         PostService._get_scheduled_or_error(db, post_id)
         if not PostService._publish_post(db, post_id, _utc_now()):
             raise _conflict(MSG_ALREADY_PUBLISHED)
@@ -822,7 +822,7 @@ class PostService:
         return PostService._single(db, user, post_id)
 
     @staticmethod
-    def set_archived(db: Session, user: User, post_id: int, archive: bool) -> FeedResponse:
+    def _set_archived(db: Session, user: User, post_id: int, archive: bool) -> FeedResponse:
         """Hide a post from the profile and feed (archive) or bring it back (restore)."""
         post = PostService._get_own_post(db, user, post_id, allow_scheduled=False)
         from_status = STATUS_PUBLISHED if archive else STATUS_ARCHIVED
@@ -843,7 +843,7 @@ class PostService:
         return PostService._single(db, user, post_id)
 
     @staticmethod
-    def set_pinned(db: Session, user: User, post_id: int, pinned: bool) -> FeedResponse:
+    def _set_pinned(db: Session, user: User, post_id: int, pinned: bool) -> FeedResponse:
         post = PostService._get_own_post(db, user, post_id, allow_scheduled=False)
         if post.status != STATUS_PUBLISHED:
             raise _bad("Only posts on your profile can be pinned.")
@@ -866,6 +866,22 @@ class PostService:
         return PostService._single(db, user, post_id)
 
     @staticmethod
+    def archive_post(db: Session, user: User, post_id: int) -> FeedResponse:
+        return PostService._set_archived(db, user, post_id, archive=True)
+
+    @staticmethod
+    def restore_post(db: Session, user: User, post_id: int) -> FeedResponse:
+        return PostService._set_archived(db, user, post_id, archive=False)
+
+    @staticmethod
+    def pin_post(db: Session, user: User, post_id: int) -> FeedResponse:
+        return PostService._set_pinned(db, user, post_id, pinned=True)
+
+    @staticmethod
+    def unpin_post(db: Session, user: User, post_id: int) -> FeedResponse:
+        return PostService._set_pinned(db, user, post_id, pinned=False)
+
+    @staticmethod
     def delete_post(db: Session, user: User, post_id: int) -> dict:
         """Delete a published or archived post, or cancel a scheduled one."""
         post = db.get(Post, post_id)
@@ -885,7 +901,7 @@ class PostService:
 
     
     @staticmethod
-    def vote(db: Session, user: User, post_id: int, option_id: int) -> PollOut:
+    def vote_in_poll(db: Session, user: User, post_id: int, option_id: int) -> PollOut:
         post = db.get(Post, post_id)
         if (
             not post

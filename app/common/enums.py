@@ -1,12 +1,6 @@
 import enum
 
 
-class UserRoleEnum(str, enum.Enum):
-    ADMIN = "admin"
-    INFLUENCER = "influencer"
-    FREELANCER = "freelancer"
-
-
 class StoryAudienceEnum(str, enum.Enum):
     PUBLIC = "PUBLIC"
     FOLLOWERS = "FOLLOWERS"
@@ -20,11 +14,3 @@ class StoryAudienceEnum(str, enum.Enum):
                 if member.value == clean or member.name == clean:
                     return member
         return None
-
-
-StoryAudience = StoryAudienceEnum
-
-
-class MediaTypeEnum(str, enum.Enum):
-    IMAGE = "image"
-    VIDEO = "video"

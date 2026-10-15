@@ -1,4 +1,3 @@
-import pytest
 from starlette.testclient import TestClient
 
 def test_mute_creator_hides_stories_until_unmute(

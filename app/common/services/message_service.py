@@ -208,7 +208,7 @@ class MessageService:
         return {"is_request": is_request, "request_sent": request_sent, "can_send": can_send}
 
     @staticmethod
-    def accept_request(db: Session, me: User, other_id: int) -> Dict[str, Any]:
+    def accept_message_request(db: Session, me: User, other_id: int) -> Dict[str, Any]:
         MessageService._get_partner(db, me, other_id)
         exists = db.execute(
             select(MessageRequestAccept.id).where(
@@ -291,7 +291,7 @@ class MessageService:
         return state
 
     @staticmethod
-    def summary(db: Session, me: User) -> Dict[str, int]:
+    def get_summary(db: Session, me: User) -> Dict[str, int]:
         latest = db.execute(
             select(func.max(DirectMessage.id)).where(
                 or_(DirectMessage.sender_id == me.user_id, DirectMessage.receiver_id == me.user_id)
@@ -322,7 +322,7 @@ class MessageService:
         }
 
     @staticmethod
-    def conversations(db: Session, me: User, limit: int = 100) -> List[Dict[str, Any]]:
+    def list_conversations(db: Session, me: User, limit: int = 100) -> List[Dict[str, Any]]:
         partner_id_expr = case(
             (DirectMessage.sender_id == me.user_id, DirectMessage.receiver_id),
             else_=DirectMessage.sender_id,
@@ -398,7 +398,7 @@ class MessageService:
         return result
 
     @staticmethod
-    def thread(
+    def get_thread(
         db: Session,
         me: User,
         other_id: int,
@@ -492,7 +492,7 @@ class MessageService:
         }
 
     @staticmethod
-    def send(db: Session, me: User, other_id: int, body: str) -> Dict[str, Any]:
+    def send_message(db: Session, me: User, other_id: int, body: str) -> Dict[str, Any]:
         MessageService._get_partner(db, me, other_id)
         state = MessageService._block_state(db, me.user_id, other_id)
         if state["blocked_by_me"]:
@@ -531,7 +531,7 @@ class MessageService:
         return _message_dict(msg, me.user_id)
 
     @staticmethod
-    def unsend(db: Session, me: User, message_id: int) -> Dict[str, Any]:
+    def unsend_message(db: Session, me: User, message_id: int) -> Dict[str, Any]:
         msg = db.get(DirectMessage, message_id)
         if msg is None or me.user_id not in (msg.sender_id, msg.receiver_id):
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Message not found")
@@ -572,7 +572,7 @@ class MessageService:
         return {"success": True, "message_id": message_id}
 
     @staticmethod
-    def delete_chat(db: Session, me: User, other_id: int) -> Dict[str, Any]:
+    def delete_thread(db: Session, me: User, other_id: int) -> Dict[str, Any]:
         MessageService._get_partner(db, me, other_id)
         pair = or_(
             and_(DirectMessage.sender_id == me.user_id, DirectMessage.receiver_id == other_id),
@@ -587,7 +587,7 @@ class MessageService:
         return {"success": True}
 
     @staticmethod
-    def block(db: Session, me: User, other_id: int) -> Dict[str, Any]:
+    def block_user(db: Session, me: User, other_id: int) -> Dict[str, Any]:
         MessageService._get_partner(db, me, other_id)
         exists = db.execute(
             select(UserBlock.id).where(
@@ -603,7 +603,7 @@ class MessageService:
         return {"success": True, "blocked": True}
 
     @staticmethod
-    def unblock(db: Session, me: User, other_id: int) -> Dict[str, Any]:
+    def unblock_user(db: Session, me: User, other_id: int) -> Dict[str, Any]:
         db.execute(
             delete(UserBlock).where(
                 UserBlock.blocker_id == me.user_id, UserBlock.blocked_id == other_id
@@ -613,7 +613,7 @@ class MessageService:
         return {"success": True, "blocked": False}
 
     @staticmethod
-    def mute(db: Session, me: User, other_id: int) -> Dict[str, Any]:
+    def mute_chat(db: Session, me: User, other_id: int) -> Dict[str, Any]:
         MessageService._get_partner(db, me, other_id)
         if not MessageService._is_muted(db, me.user_id, other_id):
             db.add(ChatMute(user_id=me.user_id, partner_id=other_id))
@@ -624,7 +624,7 @@ class MessageService:
         return {"success": True, "muted": True}
 
     @staticmethod
-    def unmute(db: Session, me: User, other_id: int) -> Dict[str, Any]:
+    def unmute_chat(db: Session, me: User, other_id: int) -> Dict[str, Any]:
         db.execute(
             delete(ChatMute).where(ChatMute.user_id == me.user_id, ChatMute.partner_id == other_id)
         )
@@ -632,14 +632,14 @@ class MessageService:
         return {"success": True, "muted": False}
 
     @staticmethod
-    def report(db: Session, me: User, other_id: int, reason: str) -> Dict[str, Any]:
+    def report_user(db: Session, me: User, other_id: int, reason: str) -> Dict[str, Any]:
         MessageService._get_partner(db, me, other_id)
         db.add(UserReport(reporter_id=me.user_id, reported_id=other_id, reason=(reason or "").strip()[:500]))
         db.commit()
         return {"success": True}
 
     @staticmethod
-    def mark_read(db: Session, me: User, other_id: int) -> Dict[str, Any]:
+    def mark_thread_read(db: Session, me: User, other_id: int) -> Dict[str, Any]:
         MessageService._get_partner(db, me, other_id)
         db.execute(
             update(DirectMessage)
@@ -656,7 +656,7 @@ class MessageService:
         return {"success": True}
 
     @staticmethod
-    def mark_unread(db: Session, me: User, other_id: int) -> Dict[str, Any]:
+    def mark_thread_unread(db: Session, me: User, other_id: int) -> Dict[str, Any]:
         MessageService._get_partner(db, me, other_id)
         state = MessageService._get_or_create_chat_state(db, me.user_id, other_id)
         state.manually_unread = True
@@ -735,7 +735,7 @@ class MessageService:
         }
 
     @staticmethod
-    def react(db: Session, me: User, message_id: int, emoji: str) -> Dict[str, Any]:
+    def react_to_message(db: Session, me: User, message_id: int, emoji: str) -> Dict[str, Any]:
         MessageService._get_reactable_message(db, me, message_id)
 
         def _apply() -> None:
@@ -759,7 +759,7 @@ class MessageService:
         return MessageService._reaction_payload(db, message_id)
 
     @staticmethod
-    def unreact(db: Session, me: User, message_id: int) -> Dict[str, Any]:
+    def remove_message_reaction(db: Session, me: User, message_id: int) -> Dict[str, Any]:
         MessageService._get_reactable_message(db, me, message_id)
         existing = db.execute(
             select(MessageReaction).where(

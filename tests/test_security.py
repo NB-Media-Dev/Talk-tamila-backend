@@ -44,7 +44,7 @@ def test_otp_is_voided_after_too_many_wrong_guesses(client, db_session, monkeypa
     from app.common.services.auth_service import AuthService, MAX_OTP_ATTEMPTS
 
     user = db_session.query(User).filter(User.email == "priya@talktamila.com").first()
-    AuthService.create_otp(db_session, user.email)
+    AuthService.forgot_password(db_session, user.email)
     real_otp = sent["otp"]
     wrong = "000000" if real_otp != "000000" else "111111"
 
@@ -169,7 +169,7 @@ def test_otp_is_hashed_at_rest(db_session, monkeypatch):
     from app.common.services.auth_service import AuthService
 
     user = db_session.query(User).filter(User.email == "priya@talktamila.com").first()
-    AuthService.create_otp(db_session, user.email)
+    AuthService.forgot_password(db_session, user.email)
     db_session.refresh(user)
 
     assert user.reset_otp != sent["otp"]

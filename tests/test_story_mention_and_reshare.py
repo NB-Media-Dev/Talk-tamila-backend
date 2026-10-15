@@ -1,11 +1,9 @@
-import pytest
 from datetime import datetime, timedelta, timezone
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
 from app.common.models.moderation import UserBlock
-from app.common.models.social import Notification
-from app.common.models.story import Story, StoryMention
+from app.common.models.story import Story
 from app.common.models.user import User
 from app.core.security import create_access_token
 

@@ -14,7 +14,13 @@ from app.common.models.user import User
 from app.common.models.social import Profile
 from app.common.schemas.auth import RegisterRequest
 from app.core.config import settings
-from app.core.security import create_access_token, get_password_hash, verify_password
+from app.core.security import (
+    create_access_token,
+    create_refresh_token,
+    decode_token,
+    get_password_hash,
+    verify_password,
+)
 
 logger = logging.getLogger("talktamila.auth")
 
@@ -64,7 +70,7 @@ class AuthService:
         return AuthService.get_by_username(db, identifier)
 
     @staticmethod
-    def create_otp(db: Session, identifier: str) -> None:
+    def forgot_password(db: Session, identifier: str) -> None:
         user = AuthService.get_by_identifier(db, identifier)
         if not user:
             return
@@ -97,7 +103,7 @@ class AuthService:
         return f"{name[:2]}{'*' * max(len(name) - 2, 1)}@{domain}"
 
     @staticmethod
-    def send_change_password_otp(db: Session, user: User) -> str:
+    def request_change_password_otp(db: Session, user: User) -> str:
         """Email a 6-digit code to the user's registered address. Returns the masked address."""
         expires = user.reset_otp_expires
         if expires:
@@ -130,7 +136,7 @@ class AuthService:
         return AuthService._mask_email(user.email)
 
     @staticmethod
-    def change_password_with_otp(
+    def change_password(
         db: Session, user: User, old_password: str, otp: str, new_password: str
     ) -> None:
         if not verify_password(old_password, user.password):
@@ -182,7 +188,7 @@ class AuthService:
         db.commit()
 
     @staticmethod
-    def reset_password_with_otp(db: Session, identifier: str, otp: str, new_password: str) -> User:
+    def reset_password(db: Session, identifier: str, otp: str, new_password: str) -> User:
         user = AuthService.get_by_identifier(db, identifier)
         if not user:
             raise HTTPException(status_code=400, detail="Invalid or expired OTP.")
@@ -201,7 +207,7 @@ class AuthService:
         return user
 
     @staticmethod
-    def register(db: Session, data: RegisterRequest) -> User:
+    def _create_user(db: Session, data: RegisterRequest) -> User:
         if AuthService.get_by_email(db, data.email):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -240,8 +246,6 @@ class AuthService:
                     detail="This mobile number is already registered. Please use a different mobile number.",
                 )
 
-        role_val = data.role if data.role in ("influencer", "freelancer", "admin") else "influencer"
-
         hashed = get_password_hash(data.password)
         new_user = User(
             username=uname,
@@ -250,7 +254,7 @@ class AuthService:
             first_name=fname,
             last_name=lname,
             mobile_no=mob,
-            role=role_val,
+            role=data.role,
             dob=data.dob,
         )
         db.add(new_user)
@@ -267,9 +271,65 @@ class AuthService:
         return new_user
 
     @staticmethod
-    def generate_token_response(user: User) -> dict:
-        token = create_access_token(user.id)
-        user_dict = {
+    def check_availability(
+        db: Session,
+        email: Optional[str],
+        mobile_no: Optional[str],
+        username: Optional[str],
+    ) -> dict:
+        """Tell the signup form which of email / mobile / username are still free."""
+        def answer(is_taken: bool, message: str) -> dict:
+            return {"available": not is_taken, "message": message if is_taken else None}
+
+        availability: dict = {}
+        if email is not None:
+            availability["email"] = answer(
+                AuthService.get_by_email(db, email.strip()) is not None,
+                "This email is already registered. Please use a different email.",
+            )
+        if mobile_no is not None:
+            availability["mobile_no"] = answer(
+                AuthService.get_by_mobile(db, mobile_no.strip()) is not None,
+                "This mobile number is already registered. Please use a different mobile number.",
+            )
+        if username is not None:
+            availability["username"] = answer(
+                AuthService.get_by_username(db, username.strip()) is not None,
+                "This username is already taken. Please choose a different username.",
+            )
+        return availability
+
+    @staticmethod
+    def signup(db: Session, data: RegisterRequest) -> dict:
+        user = AuthService._create_user(db, data)
+        user_summary = {
+            "id": user.user_id,
+            "user_id": user.user_id,
+            "username": user.username,
+            "email": user.email,
+            "full_name": user.full_name,
+            "mobile_no": user.mobile_no,
+            "dob": user.dob.isoformat() if user.dob else None,
+            "role": user.role,
+        }
+        return {"user": user_summary, **user_summary}
+
+    @staticmethod
+    def login(db: Session, username_or_email: str, password: str) -> dict:
+        user = AuthService.authenticate(db, username_or_email, password)
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Incorrect username/email or password.",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        if not user.is_active:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="This account has been suspended. Contact support for help.",
+            )
+
+        user_details = {
             "id": user.id,
             "user_id": user.user_id,
             "username": user.username,
@@ -277,12 +337,43 @@ class AuthService:
             "first_name": user.first_name,
             "last_name": user.last_name,
             "full_name": user.full_name,
+            "mobile_no": user.mobile_no,
+            "dob": user.dob.isoformat() if user.dob else None,
             "role": user.role,
             "avatar_url": user.avatar_url,
             "followers_count": user.followers_count,
         }
         return {
-            "access_token": token,
+            "access_token": create_access_token(user.id),
+            "refresh_token": create_refresh_token(user.id),
             "token_type": "bearer",
-            "user": user_dict,
+            "user": user_details,
+            "id": user.id,
+            "user_id": user.user_id,
+            "username": user.username,
+            "email": user.email,
+            "full_name": user.full_name,
+            "mobile_no": user.mobile_no,
+            "dob": user_details["dob"],
+            "role": user.role,
+        }
+
+    @staticmethod
+    def refresh_token(db: Session, refresh_token: str) -> dict:
+        try:
+            decoded = decode_token(refresh_token)
+            if decoded.get("type") != "refresh":
+                raise ValueError("wrong token type")
+            user_id = int(decoded.get("sub"))
+        except Exception:
+            raise HTTPException(status_code=401, detail="Invalid refresh token.") from None
+
+        user = db.get(User, user_id)
+        if not user or not user.is_active:
+            raise HTTPException(status_code=401, detail="User not found.")
+
+        return {
+            "access_token": create_access_token(user.id),
+            "refresh_token": create_refresh_token(user.id),
+            "token_type": "bearer",
         }

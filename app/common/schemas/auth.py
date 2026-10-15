@@ -6,27 +6,7 @@ from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator, mo
 MOBILE_RE = re.compile(r"^\+?\d{10,15}$")
 
 
-class Token(BaseModel):
-    access_token: str
-    token_type: str = "bearer"
-    user: Optional[dict] = None
-
-
-class TokenPayload(BaseModel):
-    sub: Optional[str] = None
-    exp: Optional[int] = None
-    type: Optional[str] = None
-
-
-class LoginRequest(BaseModel):
-    username: Optional[str] = None
-    email: Optional[str] = None
-    username_or_email: Optional[str] = None
-    password: str
-
-
 class RegisterRequest(BaseModel):
-
     username: str = Field(..., min_length=3, max_length=100)
     email: EmailStr
     password: str = Field(..., min_length=6)

@@ -6,7 +6,6 @@ from app.common.models.messaging import DirectMessage, MessageReaction
 from app.common.models.story import Story, StoryLike, StoryReply
 from app.common.models.user import User
 from app.core.security import create_access_token
-from app.utils.seed import seed_db_data
 
 API = "/api/v1"
 
@@ -38,7 +37,7 @@ def clean_messages(db_session, people):
 
 @pytest.fixture
 def story(db_session, people):
-    from app.common.services.story_service import make_naive, utc_now
+    from app.common.services.story.story_helpers import make_naive, utc_now
 
     owner, _, _ = people
     s = Story(
@@ -110,7 +109,7 @@ def test_story_like_sends_heart_message_once(client, people, story):
 def test_expired_story_context_is_marked_unavailable(client, db_session, people, story):
     owner, replier, _ = people
     client.post(f"{API}/stories/{story}/reply", json={"text": "hey"}, headers=_h(replier))
-    from app.common.services.story_service import make_naive, utc_now
+    from app.common.services.story.story_helpers import make_naive, utc_now
 
     s = db_session.get(Story, story)
     s.expires_at = make_naive(utc_now()) - timedelta(minutes=1)

@@ -291,7 +291,7 @@ class PostEngagementService:
         return LikeState(liked=liked, like_count=None if hidden else total)
 
     @staticmethod
-    def like(db: Session, current_user: User, post_id: int) -> LikeState:
+    def like_post(db: Session, current_user: User, post_id: int) -> LikeState:
         post = PostEngagementService._get_post(db, current_user, post_id)
         exists = db.execute(
             select(PostLike.like_id).where(
@@ -307,7 +307,7 @@ class PostEngagementService:
         return PostEngagementService._like_state(db, current_user, post, True)
 
     @staticmethod
-    def unlike(db: Session, current_user: User, post_id: int) -> LikeState:
+    def unlike_post(db: Session, current_user: User, post_id: int) -> LikeState:
         post = PostEngagementService._get_post(db, current_user, post_id, strict=False)
         existing = db.execute(
             select(PostLike).where(
@@ -326,7 +326,7 @@ class PostEngagementService:
         return PostEngagementService._like_state(db, current_user, post, False)
 
     @staticmethod
-    def list_likers(
+    def list_post_likers(
         db: Session, current_user: User, post_id: int, limit: int = 50, offset: int = 0
     ) -> LikersResponse:
         PostEngagementService._get_post(db, current_user, post_id)
@@ -362,7 +362,7 @@ class PostEngagementService:
 
     
     @staticmethod
-    def save(db: Session, current_user: User, post_id: int) -> SaveState:
+    def save_post(db: Session, current_user: User, post_id: int) -> SaveState:
         PostEngagementService._get_post(db, current_user, post_id)
         exists = db.execute(
             select(PostSave.save_id).where(
@@ -375,7 +375,7 @@ class PostEngagementService:
         return SaveState(saved=True)
 
     @staticmethod
-    def unsave(db: Session, current_user: User, post_id: int) -> SaveState:
+    def unsave_post(db: Session, current_user: User, post_id: int) -> SaveState:
         PostEngagementService._get_post(db, current_user, post_id, strict=False)
         existing = db.execute(
             select(PostSave).where(
@@ -389,7 +389,7 @@ class PostEngagementService:
 
     
     @staticmethod
-    def share(
+    def share_post(
         db: Session,
         current_user: User,
         post_id: int,
@@ -438,7 +438,7 @@ class PostEngagementService:
        # return ShareState(share_count=_count(db, PostShare.share_id, PostShare.post_id == post_id))
 
     @staticmethod
-    def record_view(db: Session, current_user: User, post_id: int) -> dict:
+    def view_post(db: Session, current_user: User, post_id: int) -> dict:
         post = PostEngagementService._get_post(db, current_user, post_id)
         if post.user_id != current_user.user_id:
             exists = db.execute(
@@ -452,7 +452,7 @@ class PostEngagementService:
         return {"success": True}
 
     @staticmethod
-    def report(db: Session, current_user: User, post_id: int, reason: str) -> dict:
+    def report_post(db: Session, current_user: User, post_id: int, reason: str) -> dict:
         PostEngagementService._get_post(db, current_user, post_id)
         exists = db.execute(
             select(PostReport.report_id).where(
@@ -482,7 +482,7 @@ class PostEngagementService:
         return {str(d): int(n) for d, n in rows}
 
     @staticmethod
-    def insights(db: Session, current_user: User, post_id: int) -> InsightsOut:
+    def get_post_insights(db: Session, current_user: User, post_id: int) -> InsightsOut:
         post = PostEngagementService._get_post(db, current_user, post_id, strict=False)
         if not current_user.is_admin and post.user_id != current_user.user_id:
             raise _err(
@@ -590,7 +590,7 @@ class PostEngagementService:
         )
 
     @staticmethod
-    def list_comments(
+    def list_post_comments(
         db: Session,
         current_user: User,
         post_id: int,
@@ -616,7 +616,7 @@ class PostEngagementService:
         )
 
     @staticmethod
-    def list_replies(
+    def list_comment_replies(
         db: Session,
         current_user: User,
         post_id: int,
@@ -647,7 +647,7 @@ class PostEngagementService:
         )
 
     @staticmethod
-    def add_comment(
+    def add_post_comment(
         db: Session,
         current_user: User,
         post_id: int,
@@ -703,7 +703,7 @@ class PostEngagementService:
         return PostEngagementService._build_comment_out(comment, post, current_user, author, 0, False, 0)
 
     @staticmethod
-    def delete_comment(
+    def delete_post_comment(
         db: Session, current_user: User, post_id: int, comment_id: int
     ) -> CommentDeleteResult:
         post = PostEngagementService._get_post(db, current_user, post_id, strict=False)
@@ -733,7 +733,7 @@ class PostEngagementService:
         return _count(db, PostCommentLike.id, PostCommentLike.comment_id == comment_id)
 
     @staticmethod
-    def like_comment(
+    def like_post_comment(
         db: Session, current_user: User, post_id: int, comment_id: int
     ) -> CommentLikeState:
         PostEngagementService._get_post(db, current_user, post_id)
@@ -755,7 +755,7 @@ class PostEngagementService:
         )
 
     @staticmethod
-    def unlike_comment(
+    def unlike_post_comment(
         db: Session, current_user: User, post_id: int, comment_id: int
     ) -> CommentLikeState:
         PostEngagementService._get_post(db, current_user, post_id, strict=False)

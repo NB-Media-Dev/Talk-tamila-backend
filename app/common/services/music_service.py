@@ -77,7 +77,7 @@ def fetch_from_open_itunes(term: str, limit: int = 15) -> List[MusicTrackRespons
 
 class MusicService:
     @staticmethod
-    def get_trending(db: Session, limit: int = 15) -> List[MusicTrackResponse]:
+    def get_trending_music(db: Session, limit: int = 15) -> List[MusicTrackResponse]:
         results: List[MusicTrackResponse] = []
         seen_keys = set()
 
@@ -164,10 +164,10 @@ class MusicService:
         return results[:limit]
 
     @staticmethod
-    def search(db: Session, query: str = "", limit: int = 15) -> List[MusicTrackResponse]:
+    def search_music(db: Session, query: str = "", limit: int = 15) -> List[MusicTrackResponse]:
         q = query.strip()
         if not q:
-            return MusicService.get_trending(db, limit)
+            return MusicService.get_trending_music(db, limit)
 
         results: List[MusicTrackResponse] = []
         seen_keys = set()

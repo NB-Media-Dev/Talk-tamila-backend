@@ -18,6 +18,10 @@ from app.common.schemas.story import (
     StoryStatsResponse,
     StoryWithMetrics,
 )
+from app.common.enums import StoryAudienceEnum
+from app.common.services.story.story_analytics_service import StoryAnalyticsService
+from app.common.services.story.story_creation_service import StoryCreationService
+from app.common.services.story.story_feed_service import StoryFeedService
 
 router = APIRouter(prefix="/admin", tags=["Admin"])
 
@@ -45,15 +49,13 @@ def get_all_stories(
 
 
 @router.post("/stories", response_model=StoryItemResponse, status_code=status.HTTP_201_CREATED)
-def admin_create_story(
+def create_story(
     payload: StoryCreateRequest,
     current_admin: User = Depends(get_current_admin),
     db: Session = Depends(get_db),
 ) -> StoryItemResponse:
-    from app.common.enums import StoryAudienceEnum
-    from app.common.services.story_service import StoryService
     payload.audience = StoryAudienceEnum.PUBLIC
-    return StoryService.create_story(payload, current_admin, db)
+    return StoryCreationService.create_story(payload, current_admin, db)
 
 
 @router.get("/stories/stats", response_model=AdminPlatformStoryStats)
@@ -65,21 +67,19 @@ def get_platform_story_stats(
 
 
 @router.get("/stories/my", response_model=List[StoryWithMetrics])
-def get_admin_my_stories(
+def get_my_stories_with_metrics(
     current_admin: User = Depends(get_current_admin),
     db: Session = Depends(get_db),
 ) -> List[StoryWithMetrics]:
-    from app.common.services.story_service import StoryService
-    return StoryService.get_my_stories_with_metrics(current_admin, db)
+    return StoryFeedService.get_my_stories_with_metrics(current_admin, db)
 
 
 @router.get("/stories/my/stats", response_model=StoryStatsResponse)
-def get_admin_my_story_stats(
+def get_my_story_stats(
     current_admin: User = Depends(get_current_admin),
     db: Session = Depends(get_db),
 ) -> StoryStatsResponse:
-    from app.common.services.story_service import StoryService
-    return StoryService.get_my_stats(current_admin, db)
+    return StoryAnalyticsService.get_my_story_stats(current_admin, db)
 
 
 @router.get("/stories/reports", response_model=List[AdminReportItem])
@@ -93,7 +93,7 @@ def get_story_reports(
 
 
 @router.delete("/stories/{story_id:int}")
-def admin_delete_story(
+def delete_story(
     story_id: int,
     current_admin: User = Depends(get_current_admin),
     db: Session = Depends(get_db),
@@ -102,7 +102,7 @@ def admin_delete_story(
 
 
 @router.patch("/stories/{story_id:int}/restore")
-def admin_restore_story(
+def restore_story(
     story_id: int,
     current_admin: User = Depends(get_current_admin),
     db: Session = Depends(get_db),
@@ -112,7 +112,7 @@ def admin_restore_story(
 
 @router.patch("/users/{user_id:int}/ban")
 @router.post("/users/{user_id:int}/ban")
-def admin_ban_user(
+def ban_user(
     user_id: int,
     current_admin: User = Depends(get_current_admin),
     db: Session = Depends(get_db),
@@ -122,7 +122,7 @@ def admin_ban_user(
 
 @router.patch("/users/{user_id:int}/unban")
 @router.post("/users/{user_id:int}/unban")
-def admin_unban_user(
+def unban_user(
     user_id: int,
     current_admin: User = Depends(get_current_admin),
     db: Session = Depends(get_db),
@@ -131,7 +131,7 @@ def admin_unban_user(
 
 
 @router.post("/stories/{story_id:int}/warn", response_model=AdminWarnResponse)
-def admin_warn_story_creator(
+def warn_story_creator(
     story_id: int,
     payload: AdminWarnRequest,
     current_admin: User = Depends(get_current_admin),
@@ -149,7 +149,7 @@ def admin_warn_story_creator(
 
 
 @router.post("/users/{user_id:int}/warn", response_model=AdminWarnResponse)
-def admin_warn_user(
+def warn_user(
     user_id: int,
     payload: AdminWarnRequest,
     current_admin: User = Depends(get_current_admin),

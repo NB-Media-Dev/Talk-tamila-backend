@@ -154,7 +154,7 @@ def test_self_and_others_stories_flow(
     assert del_forbidden.status_code == 403
 
     # 12. Creator (author) deletes story -> 204 No Content
-    del_resp = client.delete(f"/api/v1/stories/{story_id}", headers=creator_auth_headers)
+    client.delete(f"/api/v1/stories/{story_id}", headers=creator_auth_headers)
     get_del_resp = client.get(f"/api/v1/stories/{story_id}")
     assert get_del_resp.status_code == 404
 

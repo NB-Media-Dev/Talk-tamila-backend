@@ -27,7 +27,7 @@ from app.common.schemas.post import (
     ShareState,
     VoteRequest,
 )
-from app.common.services.post_engagement_service import PostEngagementService as Engage
+from app.common.services.post_engagement_service import PostEngagementService
 from app.common.services.post_service import PostService, max_bytes_for, to_utc_naive
 from app.core.dependencies import (
     get_current_admin,
@@ -137,7 +137,7 @@ def list_scheduled_posts(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail="from_at must be before to_at."
         )
-    return PostService.list_scheduled(db, admin, limit, offset, start, end)
+    return PostService.list_scheduled_posts(db, admin, limit, offset, start, end)
 
 
 @router.get("/saved", response_model=FeedResponse)
@@ -148,7 +148,7 @@ def list_saved_posts(
     offset: int = Query(default=0, ge=0),
 ) -> FeedResponse:
     """Posts I saved, most recently saved first."""
-    return PostService.get_saved(db, current_user, limit, offset)
+    return PostService.list_saved_posts(db, current_user, limit, offset)
 
 
 @router.get("/archived", response_model=FeedResponse)
@@ -159,7 +159,7 @@ def list_archived_posts(
     offset: int = Query(default=0, ge=0),
 ) -> FeedResponse:
     """My own archived posts."""
-    return PostService.get_archived(db, current_user, limit, offset)
+    return PostService.list_archived_posts(db, current_user, limit, offset)
 
 
 @router.get("/{post_id:int}", response_model=FeedResponse)
@@ -167,7 +167,7 @@ def get_one_post(post_id: int,
      current_user: CurrentUser, 
      db: DB) -> FeedResponse:
     """One post (items[0]). Used by shared links and notifications."""
-    return PostService.get_one(db, current_user, post_id)
+    return PostService.get_one_post(db, current_user, post_id)
 
 
 
@@ -178,14 +178,14 @@ def reschedule_post(
     admin: AdminUser,
     db: DB
 ) -> FeedResponse:
-    return PostService.reschedule(db, admin, post_id, payload.scheduled_at)
+    return PostService.reschedule_post(db, admin, post_id, payload.scheduled_at)
 
 
 @router.post("/{post_id:int}/publish", response_model=FeedResponse)
 def publish_post_now(post_id: int,
      admin: AdminUser, 
      db: DB) -> FeedResponse:
-    return PostService.publish_now(db, admin, post_id)
+    return PostService.publish_post_now(db, admin, post_id)
 
 
 @router.patch("/{post_id:int}", response_model=FeedResponse)
@@ -203,28 +203,28 @@ def edit_post(
 def archive_post(post_id: int,
     current_user: CurrentUser, 
     db: DB) -> FeedResponse:
-    return PostService.set_archived(db, current_user, post_id, True)
+    return PostService.archive_post(db, current_user, post_id)
 
 
 @router.post("/{post_id:int}/restore", response_model=FeedResponse)
 def restore_post(post_id: int,
     current_user: CurrentUser, 
     db: DB) -> FeedResponse:
-    return PostService.set_archived(db, current_user, post_id, False)
+    return PostService.restore_post(db, current_user, post_id)
 
 
 @router.post("/{post_id:int}/pin", response_model=FeedResponse)
 def pin_post(post_id: int, 
     current_user: CurrentUser,
     db: DB) -> FeedResponse:
-    return PostService.set_pinned(db, current_user, post_id, True)
+    return PostService.pin_post(db, current_user, post_id)
 
 
 @router.delete("/{post_id:int}/pin", response_model=FeedResponse)
 def unpin_post(post_id: int,
     current_user: CurrentUser, 
     db: DB) -> FeedResponse:
-    return PostService.set_pinned(db, current_user, post_id, False)
+    return PostService.unpin_post(db, current_user, post_id)
 
 
 @router.delete("/{post_id:int}")
@@ -241,21 +241,21 @@ def vote_in_poll(post_id: int,
     payload: VoteRequest, 
     current_user: CurrentUser, 
     db: DB) -> PollOut:
-    return PostService.vote(db, current_user, post_id, payload.option_id)
+    return PostService.vote_in_poll(db, current_user, post_id, payload.option_id)
 
 
 @router.post("/{post_id:int}/like", response_model=LikeState)
 def like_post(post_id: int, 
     current_user: CurrentUser, 
     db: DB) -> LikeState:
-    return Engage.like(db, current_user, post_id)
+    return PostEngagementService.like_post(db, current_user, post_id)
 
 
 @router.delete("/{post_id:int}/like", response_model=LikeState)
 def unlike_post(post_id: int, 
     current_user: CurrentUser, 
     db: DB) -> LikeState:
-    return Engage.unlike(db, current_user, post_id)
+    return PostEngagementService.unlike_post(db, current_user, post_id)
 
 
 @router.get("/{post_id:int}/likes", response_model=LikersResponse)
@@ -266,21 +266,21 @@ def list_post_likers(
     limit: int = Query(default=50, ge=1, le=100),
     offset: int = Query(default=0, ge=0),
 ) -> LikersResponse:
-    return Engage.list_likers(db, current_user, post_id, limit, offset)
+    return PostEngagementService.list_post_likers(db, current_user, post_id, limit, offset)
 
 
 @router.post("/{post_id:int}/save", response_model=SaveState)
 def save_post(post_id: int, 
     current_user: CurrentUser, 
     db: DB) -> SaveState:
-    return Engage.save(db, current_user, post_id)
+    return PostEngagementService.save_post(db, current_user, post_id)
 
 
 @router.delete("/{post_id:int}/save", response_model=SaveState)
 def unsave_post(post_id: int, 
     current_user: CurrentUser, 
     db: DB) -> SaveState:
-    return Engage.unsave(db, current_user, post_id)
+    return PostEngagementService.unsave_post(db, current_user, post_id)
 
 
 @router.post("/{post_id:int}/share", response_model=ShareState)
@@ -291,7 +291,7 @@ def share_post(
     db: DB
 ) -> ShareState:
     """Count a share (link copied, or sent to people in messages)."""
-    return Engage.share(db, current_user, post_id, payload.channel, payload.recipients)
+    return PostEngagementService.share_post(db, current_user, post_id, payload.channel, payload.recipients)
 
 
 @router.post("/{post_id:int}/view")
@@ -299,7 +299,7 @@ def view_post(post_id: int,
     current_user: CurrentUser, 
     db: DB) -> dict:
     """Count one view per person. Powers the reach number in insights."""
-    return Engage.record_view(db, current_user, post_id)
+    return PostEngagementService.view_post(db, current_user, post_id)
 
 
 @router.post("/{post_id:int}/report")
@@ -307,15 +307,15 @@ def report_post(post_id: int,
     payload: ReportRequest,
     current_user: CurrentUser, 
     db: DB) -> dict:
-    return Engage.report(db, current_user, post_id, payload.reason)
+    return PostEngagementService.report_post(db, current_user, post_id, payload.reason)
 
 
 @router.get("/{post_id:int}/insights", response_model=InsightsOut)
-def post_insights(post_id: int, 
+def get_post_insights(post_id: int, 
     current_user: CurrentUser, 
     db: DB) -> InsightsOut:
     """Owner (or admin) only: how the post is performing."""
-    return Engage.insights(db, current_user, post_id)
+    return PostEngagementService.get_post_insights(db, current_user, post_id)
 
 
 
@@ -328,7 +328,7 @@ def list_post_comments(
     limit: int = Query(default=20, ge=1, le=50),
     before_id: Optional[int] = Query(default=None, ge=1),
 ) -> CommentListResponse:
-    return Engage.list_comments(db, current_user, post_id, limit, before_id)
+    return PostEngagementService.list_post_comments(db, current_user, post_id, limit, before_id)
 
 
 @router.post(
@@ -340,7 +340,7 @@ def add_post_comment(
     current_user: CurrentUser, 
     db: DB
 ) -> CommentOut:
-    return Engage.add_comment(db, current_user, post_id, payload.body, payload.parent_id)
+    return PostEngagementService.add_post_comment(db, current_user, post_id, payload.body, payload.parent_id)
 
 
 @router.get("/{post_id:int}/comments/{comment_id:int}/replies", response_model=CommentListResponse)
@@ -352,7 +352,7 @@ def list_comment_replies(
     limit: int = Query(default=20, ge=1, le=50),
     after_id: Optional[int] = Query(default=None, ge=1),
 ) -> CommentListResponse:
-    return Engage.list_replies(db, current_user, post_id, comment_id, limit, after_id)
+    return PostEngagementService.list_comment_replies(db, current_user, post_id, comment_id, limit, after_id)
 
 
 @router.delete("/{post_id:int}/comments/{comment_id:int}", response_model=CommentDeleteResult)
@@ -362,7 +362,7 @@ def delete_post_comment(
     current_user: CurrentUser, 
     db: DB
 ) -> CommentDeleteResult:
-    return Engage.delete_comment(db, current_user, post_id, comment_id)
+    return PostEngagementService.delete_post_comment(db, current_user, post_id, comment_id)
 
 
 @router.post("/{post_id:int}/comments/{comment_id:int}/like", response_model=CommentLikeState)
@@ -374,8 +374,8 @@ def like_post_comment(
     action: Optional[str] = Query(None),
 ) -> CommentLikeState:
     if action == "unlike":
-        return Engage.unlike_comment(db, current_user, post_id, comment_id)
-    return Engage.like_comment(db, current_user, post_id, comment_id)
+        return PostEngagementService.unlike_post_comment(db, current_user, post_id, comment_id)
+    return PostEngagementService.like_post_comment(db, current_user, post_id, comment_id)
 
 
 @router.delete("/{post_id:int}/comments/{comment_id:int}/like", response_model=CommentLikeState)
@@ -386,7 +386,7 @@ def unlike_post_comment(
     current_user: CurrentUser, 
     db: DB
 ) -> CommentLikeState:
-    return Engage.unlike_comment(db, current_user, post_id, comment_id)
+    return PostEngagementService.unlike_post_comment(db, current_user, post_id, comment_id)
 
 
 def _parse_range(range_header: Optional[str], size: int):

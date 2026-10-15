@@ -16,6 +16,7 @@ try:
 except ImportError:
     Vapid = None
 
+from fastapi import HTTPException, status
 from sqlalchemy import delete, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -82,7 +83,20 @@ def _preview(kind: str, body: str) -> str:
 
 class PushService:
     @staticmethod
-    def subscribe(db: Session, user: User, endpoint: str, p256dh: str, auth: str) -> None:
+    def push_public_key() -> dict:
+        """The website asks this before offering "Turn on notifications"."""
+        return {
+            "enabled": is_configured(),
+            "public_key": settings.VAPID_PUBLIC_KEY if is_configured() else "",
+        }
+
+    @staticmethod
+    def push_subscribe(db: Session, user: User, endpoint: str, p256dh: str, auth: str) -> None:
+        """Save this browser so it receives message notifications for the logged-in user."""
+        if not is_configured():
+            raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "Notifications are not set up on the server.")
+        if not is_allowed_endpoint(endpoint):
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "Unsupported notification address.")
         existing = db.execute(
             select(PushSubscription).where(PushSubscription.endpoint == endpoint)
         ).scalar_one_or_none()
@@ -107,7 +121,7 @@ class PushService:
                 db.commit()
 
     @staticmethod
-    def unsubscribe(db: Session, endpoint: str) -> bool:
+    def push_unsubscribe(db: Session, endpoint: str) -> bool:
         result = db.execute(delete(PushSubscription).where(PushSubscription.endpoint == endpoint))
         db.commit()
         return bool(result.rowcount)

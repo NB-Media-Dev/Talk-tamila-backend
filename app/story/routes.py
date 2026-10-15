@@ -42,12 +42,17 @@ from app.common.schemas.story import (
 )
 from app.common.schemas.music import MusicTrackResponse
 from app.common.services.music_service import MusicService
-from app.common.services.story_service import StoryService
 from app.core.dependencies import (
     get_current_user,
     get_db,
     get_optional_current_user,
 )
+from app.common.services.story.story_analytics_service import StoryAnalyticsService
+from app.common.services.story.story_creation_service import StoryCreationService
+from app.common.services.story.story_engagement_service import StoryEngagementService
+from app.common.services.story.story_feed_service import StoryFeedService
+from app.common.services.story.story_mention_service import StoryMentionService
+from app.common.services.story.story_relationship_service import StoryRelationshipService
 
 router = APIRouter(prefix="/stories", tags=["Stories"])
 
@@ -59,7 +64,7 @@ def get_stories_feed(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> List[StoryItemResponse]:
-    return StoryService.get_privacy_feed(current_user, db, limit=limit, offset=offset)
+    return StoryFeedService.get_stories_feed(current_user, db, limit=limit, offset=offset)
 
 
 @router.get("", response_model=List[StoryGroupResponse])
@@ -68,14 +73,14 @@ def list_active_stories(
     current_user: Optional[User] = Depends(get_optional_current_user),
     db: Session = Depends(get_db),
 ) -> List[StoryGroupResponse]:
-    return StoryService.list_active_groups(current_user, db, role_filter=role)
+    return StoryFeedService.list_active_stories(current_user, db, role_filter=role)
 
 @router.get("/my", response_model=List[StoryItemResponse])
 def get_my_stories(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> List[StoryItemResponse]:
-    return StoryService.get_my_stories(current_user, db)
+    return StoryFeedService.get_my_stories(current_user, db)
 
 
 @router.get("/stats/me", response_model=StoryStatsResponse)
@@ -83,7 +88,7 @@ def get_my_story_stats(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> StoryStatsResponse:
-    return StoryService.get_my_stats(current_user, db)
+    return StoryAnalyticsService.get_my_story_stats(current_user, db)
 
 
 @router.get("/my-story-analytics", response_model=MyStoryAnalyticsResponse)
@@ -91,7 +96,7 @@ def get_my_story_analytics(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> dict:
-    return StoryService.get_my_story_analytics(current_user, db)
+    return StoryAnalyticsService.get_my_story_analytics(current_user, db)
 
 
 @router.get("/owner-feed", response_model=List[StoryOwnerFeedResponse])
@@ -99,7 +104,7 @@ def get_owner_story_feed(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> List[StoryOwnerFeedResponse]:
-    return StoryService.get_owner_feed(current_user, db)
+    return StoryFeedService.get_owner_story_feed(current_user, db)
 
 
 @router.get("/archived", response_model=List[StoryArchivedItem])
@@ -107,7 +112,7 @@ def get_archived_stories(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> List[StoryArchivedItem]:
-    return StoryService.get_archived_stories(current_user, db)
+    return StoryFeedService.get_archived_stories(current_user, db)
 
 
 @router.get("/saved")
@@ -115,7 +120,7 @@ def get_saved_stories(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> list:
-    return StoryService.get_saved_stories(current_user, db)
+    return StoryFeedService.get_saved_stories(current_user, db)
 
 
 @router.get("/music/trending", response_model=List[MusicTrackResponse])
@@ -123,7 +128,7 @@ def get_trending_music(
     limit: int = Query(default=10, ge=1, le=50),
     db: Session = Depends(get_db),
 ):
-    return MusicService.get_trending(db, limit)
+    return MusicService.get_trending_music(db, limit)
 
 
 @router.get("/music/search", response_model=List[MusicTrackResponse])
@@ -132,7 +137,7 @@ def search_music(
     limit: int = Query(default=10, ge=1, le=50),
     db: Session = Depends(get_db),
 ):
-    return MusicService.search(db, q, limit)
+    return MusicService.search_music(db, q, limit)
 
 
 @router.get("/user/{user_id}", response_model=List[StoryItemResponse])
@@ -142,7 +147,7 @@ def get_user_stories(
     db: Session = Depends(get_db),
 ) -> List[StoryItemResponse]:
     caller_id = current_user.id if current_user else None
-    return StoryService.get_user_stories(user_id, caller_id, db)
+    return StoryFeedService.get_user_stories(user_id, caller_id, db)
 
 
 @router.get("/{story_id:int}", response_model=StoryItemResponse)
@@ -152,7 +157,7 @@ def get_single_story(
     db: Session = Depends(get_db),
 ) -> StoryItemResponse:
     caller_id = current_user.id if current_user else None
-    return StoryService.get_story_by_id(story_id, caller_id, db)
+    return StoryFeedService.get_single_story(story_id, caller_id, db)
 
 
 @router.post("/upload", response_model=StoryItemResponse, status_code=status.HTTP_201_CREATED)
@@ -165,7 +170,7 @@ async def upload_single_story(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> StoryItemResponse:
-    return await StoryService.upload_single(file, caption, audience, music_data, current_user, db, music_start_time=music_start_time or 0.0)
+    return await StoryCreationService.upload_single_story(file, caption, audience, music_data, current_user, db, music_start_time=music_start_time or 0.0)
 
 
 @router.post("/upload-multiple", response_model=StoryBatchResponse, status_code=status.HTTP_201_CREATED)
@@ -178,7 +183,7 @@ async def upload_multiple_stories(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> StoryBatchResponse:
-    return await StoryService.upload_multiple(files, captions, audience, music_data, current_user, db, music_start_time=music_start_time or 0.0)
+    return await StoryCreationService.upload_multiple_stories(files, captions, audience, music_data, current_user, db, music_start_time=music_start_time or 0.0)
 
 
 @router.post("", response_model=StoryItemResponse, status_code=status.HTTP_201_CREATED)
@@ -187,7 +192,7 @@ def create_story(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> StoryItemResponse:
-    return StoryService.create_story(payload, current_user, db)
+    return StoryCreationService.create_story(payload, current_user, db)
 
 
 @router.post("/text", response_model=StoryItemResponse, status_code=status.HTTP_201_CREATED)
@@ -196,7 +201,7 @@ def create_text_story(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> StoryItemResponse:
-    return StoryService.create_text_story(payload, current_user, db)
+    return StoryCreationService.create_text_story(payload, current_user, db)
 
 
 @router.patch("/{story_id:int}", response_model=StoryItemResponse)
@@ -206,7 +211,7 @@ def edit_story(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> StoryItemResponse:
-    return StoryService.update_story(story_id, payload.caption, payload.audience, current_user, db)
+    return StoryCreationService.edit_story(story_id, payload.caption, payload.audience, current_user, db)
 
 
 @router.delete("/{story_id:int}", status_code=status.HTTP_204_NO_CONTENT)
@@ -215,7 +220,7 @@ def delete_story(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    StoryService.delete_story(story_id, current_user, db)
+    StoryCreationService.delete_story(story_id, current_user, db)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
@@ -225,7 +230,7 @@ def record_story_view(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> dict:
-    return StoryService.record_view(story_id, current_user, db)
+    return StoryEngagementService.record_story_view(story_id, current_user, db)
 
 
 @router.post("/{story_id:int}/like")
@@ -234,7 +239,7 @@ def like_story(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> dict:
-    return StoryService.like_story(story_id, current_user, db)
+    return StoryEngagementService.like_story(story_id, current_user, db)
 
 
 @router.delete("/{story_id:int}/like")
@@ -243,7 +248,7 @@ def unlike_story(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> dict:
-    return StoryService.unlike_story(story_id, current_user, db)
+    return StoryEngagementService.unlike_story(story_id, current_user, db)
 
 
 @router.post("/{story_id:int}/react", response_model=StoryReactResponse)
@@ -253,7 +258,7 @@ def react_to_story(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> StoryReactResponse:
-    return StoryService.react_to_story(story_id, payload.emoji, current_user, db)
+    return StoryEngagementService.react_to_story(story_id, payload.emoji, current_user, db)
 
 
 @router.post("/{story_id:int}/reply", status_code=status.HTTP_201_CREATED)
@@ -263,7 +268,7 @@ def reply_to_story(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> dict:
-    return StoryService.comment_story(story_id, payload.text, current_user, db)
+    return StoryEngagementService.reply_to_story(story_id, payload.text, current_user, db)
 
 
 @router.get("/{story_id:int}/comments", response_model=List[StoryReplyResponse])
@@ -272,7 +277,7 @@ def get_story_comments(
     current_user: Optional[User] = Depends(get_optional_current_user),
     db: Session = Depends(get_db),
 ) -> List[StoryReplyResponse]:
-    return StoryService.get_comments(story_id, db)
+    return StoryEngagementService.get_story_comments(story_id, db)
 
 
 @router.post("/{story_id:int}/pause")
@@ -285,7 +290,7 @@ def pause_story(
     action = payload.action if payload else "pause"
     progress_ms = payload.progress_ms if payload else None
     slide_index = payload.slide_index if payload else None
-    return StoryService.record_pause_state(story_id, action, progress_ms, slide_index, current_user, db)
+    return StoryEngagementService.pause_story(story_id, action, progress_ms, slide_index, current_user, db)
 
 
 @router.get("/{story_id:int}/activity", response_model=StoryActivityResponse)
@@ -294,7 +299,7 @@ def get_story_activity(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> StoryActivityResponse:
-    return StoryService.get_activity(story_id, current_user, db)
+    return StoryAnalyticsService.get_story_activity(story_id, current_user, db)
 
 
 @router.get("/{story_id:int}/viewers", response_model=PaginatedViewerResponse)
@@ -305,7 +310,7 @@ def get_story_viewers(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> PaginatedViewerResponse:
-    return StoryService.get_viewers(story_id, current_user, db, page=page, page_size=page_size)
+    return StoryAnalyticsService.get_story_viewers(story_id, current_user, db, page=page, page_size=page_size)
 
 
 @router.get("/{story_id:int}/likers", response_model=PaginatedLikerResponse)
@@ -316,7 +321,7 @@ def get_story_likers(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> PaginatedLikerResponse:
-    return StoryService.get_likers(story_id, current_user, db, page=page, page_size=page_size)
+    return StoryAnalyticsService.get_story_likers(story_id, current_user, db, page=page, page_size=page_size)
 
 
 @router.post("/{story_id:int}/share", response_model=StoryShareResponse)
@@ -328,7 +333,7 @@ def share_story(
 ) -> StoryShareResponse:
     platform = payload.platform if payload and payload.platform else "copy_link"
     target_user_id = payload.target_user_id if payload else None
-    return StoryService.share_story(story_id, platform, current_user, db, target_user_id=target_user_id)
+    return StoryEngagementService.share_story(story_id, platform, current_user, db, target_user_id=target_user_id)
 
 
 @router.post("/{story_id:int}/reshare", response_model=StoryItemResponse, status_code=status.HTTP_201_CREATED)
@@ -338,7 +343,7 @@ def reshare_story(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> StoryItemResponse:
-    return StoryService.re_share_story(story_id, payload, current_user, db)
+    return StoryCreationService.reshare_story(story_id, payload, current_user, db)
 
 
 @router.get("/mentions/search", response_model=List[MentionUserSearchItem])
@@ -349,7 +354,7 @@ def search_mention_users(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> List[MentionUserSearchItem]:
-    return StoryService.search_mention_users(q, current_user, db, limit=limit, story_id=story_id)
+    return StoryMentionService.search_mention_users(q, current_user, db, limit=limit, story_id=story_id)
 
 
 @router.post("/{story_id:int}/mentions")
@@ -359,7 +364,7 @@ def add_mention_to_story(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> dict:
-    return StoryService.add_mention_to_story(
+    return StoryMentionService.add_mention_to_story(
         story_id, payload.mentioned_user_id, payload.x, payload.y, current_user, db
     )
 
@@ -370,7 +375,7 @@ def save_story(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> dict:
-    return StoryService.save_story(story_id, current_user, db)
+    return StoryEngagementService.save_story(story_id, current_user, db)
 
 
 @router.delete("/{story_id:int}/save")
@@ -379,7 +384,7 @@ def unsave_story(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> dict:
-    return StoryService.unsave_story(story_id, current_user, db)
+    return StoryEngagementService.unsave_story(story_id, current_user, db)
 
 
 @router.post("/{story_id:int}/report")
@@ -389,7 +394,7 @@ def report_story(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> dict:
-    return StoryService.report_story(story_id, payload.reason, current_user, db, details=payload.details)
+    return StoryEngagementService.report_story(story_id, payload.reason, current_user, db, details=payload.details)
 
 
 @router.post("/mute/{user_id:int}", response_model=StoryMuteResponse)
@@ -399,7 +404,7 @@ def mute_creator(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> dict:
-    return StoryService.mute_creator(user_id, current_user, db)
+    return StoryRelationshipService.mute_creator(user_id, current_user, db)
 
 
 @router.delete("/mute/{user_id:int}", response_model=StoryMuteResponse)
@@ -409,7 +414,7 @@ def unmute_creator(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> dict:
-    return StoryService.unmute_creator(user_id, current_user, db)
+    return StoryRelationshipService.unmute_creator(user_id, current_user, db)
 
 
 @router.post("/follow/{user_id:int}")
@@ -418,7 +423,7 @@ def follow_user(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> dict:
-    return StoryService.follow_user(current_user.id, user_id, db)
+    return StoryRelationshipService.follow_user(current_user.id, user_id, db)
 
 
 @router.delete("/follow/{user_id:int}")
@@ -427,7 +432,7 @@ def unfollow_user(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> dict:
-    return StoryService.unfollow_user(current_user.id, user_id, db)
+    return StoryRelationshipService.unfollow_user(current_user.id, user_id, db)
 
 
 @router.get("/suggestions")
@@ -436,4 +441,4 @@ def get_suggestions(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> list[dict]:
-    return StoryService.get_suggestions(current_user, db, limit)
+    return StoryRelationshipService.get_suggestions(current_user, db, limit)

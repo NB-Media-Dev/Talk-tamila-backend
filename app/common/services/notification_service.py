@@ -4,12 +4,12 @@ Notification service — returns active notifications merged with unread DMs.
 import re
 from datetime import datetime, timezone
 from typing import List, Optional, Set
+from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 from sqlalchemy import desc, select, delete, or_, func
 from app.common.models.messaging import DirectMessage, MESSAGE_KIND_CALL, ChatState
-from app.common.models.post import Post
 from app.common.models.social import Notification, Follow
-from app.common.models.story import Story, StoryLike
+from app.common.models.story import StoryLike
 from app.common.models.user import User
 from app.common.schemas.social import NotificationResponse
 
@@ -34,7 +34,7 @@ def _uname(msg: Optional[str]) -> Optional[str]:
 
 class NotificationService:
     @staticmethod
-    def get_user_notifications(user_id: int, db: Session, limit: int = 50) -> List[NotificationResponse]:
+    def get_notifications(user_id: int, db: Session, limit: int = 50) -> List[NotificationResponse]:
         raw_notifs = (
             db.query(Notification)
             .filter(Notification.user_id == user_id)
@@ -45,7 +45,6 @@ class NotificationService:
 
         dm_ids: Set[int] = {n.reference_id for n in raw_notifs if n.reference_id and n.type in ("new_message", "story_reply", "story_react")}
         story_ids: Set[int] = {n.reference_id for n in raw_notifs if n.reference_id and n.type in ("story_like", "story_reply", "story_react", "story_share", "STORY_MENTION", "STORY_SHARED", "story_mention", "story_shared")}
-        post_ids: Set[int] = {n.reference_id for n in raw_notifs if n.reference_id and n.type in ("post_like", "post_comment", "post_comment_reply", "post_mention", "POST_MENTION", "post", "like", "comment", "post_share", "comment_like")}
         follower_ids: Set[int] = {n.reference_id for n in raw_notifs if n.reference_id and n.type == "follow"}
         unames: Set[str] = {_uname(n.message) for n in raw_notifs if _uname(n.message)}
 
@@ -190,3 +189,46 @@ class NotificationService:
 
         result.sort(key=lambda n: n.created_at, reverse=True)
         return result[:limit]
+
+    @staticmethod
+    def get_unread_count(user_id: int, db: Session) -> dict:
+        unread_count = (
+            db.query(Notification)
+            .filter(Notification.user_id == user_id, Notification.is_read.is_(False))
+            .count()
+        )
+        return {"unread_count": unread_count}
+
+    @staticmethod
+    def _get_own_notification(user_id: int, notification_id: int, db: Session) -> Notification:
+        notification = (
+            db.query(Notification)
+            .filter(Notification.id == notification_id, Notification.user_id == user_id)
+            .first()
+        )
+        if notification is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Notification not found.")
+        return notification
+
+    @staticmethod
+    def mark_notification_read(user_id: int, notification_id: int, db: Session) -> dict:
+        notification = NotificationService._get_own_notification(user_id, notification_id, db)
+        notification.is_read = True
+        db.commit()
+        return {"success": True}
+
+    @staticmethod
+    def mark_all_notifications_read(user_id: int, db: Session) -> dict:
+        db.query(Notification).filter(
+            Notification.user_id == user_id,
+            Notification.is_read.is_(False),
+        ).update({"is_read": True}, synchronize_session=False)
+        db.commit()
+        return {"success": True}
+
+    @staticmethod
+    def delete_notification(user_id: int, notification_id: int, db: Session) -> dict:
+        notification = NotificationService._get_own_notification(user_id, notification_id, db)
+        db.delete(notification)
+        db.commit()
+        return {"success": True}

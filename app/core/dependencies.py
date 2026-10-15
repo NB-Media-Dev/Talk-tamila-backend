@@ -95,14 +95,3 @@ def get_current_freelancer(current_user: User = Depends(get_current_user)) -> Us
             detail="Freelancer account required",
         )
     return current_user
-
-
-def require_role(*roles: str):
-    def _dep(current_user: User = Depends(get_current_user)) -> User:
-        if current_user.role not in roles and not current_user.is_admin:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"One of these roles is required: {', '.join(roles)}",
-            )
-        return current_user
-    return _dep
