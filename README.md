@@ -57,6 +57,31 @@ Stories are large, so they are split by what the person is doing
 | `story_settings_service.py` | muted creators, close friends, followers / following lists |
 | `story_helpers.py` | shared building blocks used by the files above |
 
+## Starting fresh (clean database for new users)
+
+A new database now starts with **only the admin account**. Nothing is
+auto-created on startup any more (the old code made 10 fake users on an empty
+development database).
+
+To clean a database that already has test data:
+
+```bash
+python scripts/reset_database.py --dry-run     # look first: shows row counts, changes nothing
+python scripts/reset_database.py               # admin only
+python scripts/reset_database.py --with-demo   # admin + demo creators and posts
+```
+
+The script shows which database it will wipe, saves a backup in `backups/`
+(needs `mysqldump`), and asks you to type the database name before deleting.
+The admin keeps their password. Everything else is removed, so each person who
+signs up afterwards starts with an empty account.
+
+`--with-demo` adds 12 sample creators and 24 posts (with likes, comments and
+poll votes) so the feed does not look empty. Edit `app/utils/demo_content.py` to
+change who they are and what they post. The script prints their shared password
+once. Demo posts are normal data: to remove them, run the reset again without
+`--with-demo`.
+
 ## Running
 
 ```bash

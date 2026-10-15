@@ -1,3 +1,8 @@
+"""Fixed test users (ids 1-11) used by the test suite only.
+
+The app itself never runs this. For a clean database or demo posts, see
+scripts/reset_database.py.
+"""
 from datetime import date, datetime, timedelta, timezone
 from sqlalchemy.orm import Session
 from app.core.security import hash_password

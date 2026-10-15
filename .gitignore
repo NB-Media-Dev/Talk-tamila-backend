@@ -13,3 +13,6 @@ env/
 # Don't upload IDE settings
 .vscode/
 .idea/
+
+# Database backups made by scripts/reset_database.py
+backups/

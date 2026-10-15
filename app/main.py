@@ -11,7 +11,6 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.admin.routes import router as admin_router
 from app.auth.routes import router as auth_router
-from app.common.models import User
 from app.core.config import settings
 from app.core.database import Base, SessionLocal, engine
 from app.core.scheduler import post_publisher_loop
@@ -26,7 +25,6 @@ from app.story.routes import router as story_router
 from app.story.settings_routes import router as story_settings_router
 from app.utils.admin_bootstrap import ensure_admin_user
 from app.utils.db_migrations import apply_startup_migrations
-from app.utils.seed import seed_db_data
 
 logger = logging.getLogger("talktamila.main")
 
@@ -36,10 +34,8 @@ def _prepare_database() -> None:
     Base.metadata.create_all(bind=engine)
     apply_startup_migrations(engine)
 
-    with SessionLocal() as db:
-        if not settings.is_production and db.query(User).first() is None:
-            seed_db_data(db)
-
+    # No sample users are created here: a new database starts with the admin only.
+    # For demo posts use `python scripts/reset_database.py --with-demo`.
     with SessionLocal() as db:
         ensure_admin_user(db)
 
