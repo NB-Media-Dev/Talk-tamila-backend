@@ -54,3 +54,13 @@ Four files that existed only in the old dump were added as-is. They are not used
 - `components/profile/Changeaccount.tsx`
 
 Every other file in the dump already exists in this project, and where the two differ this project is the newer version, so nothing was overwritten.
+
+## Profile page redesign (from project_code.txt)
+
+`components/profile/ProfileView.tsx` now follows the dump's profile layout: top bar, orange banner, avatar card, four metric cards, Creator Wallet, and an account section. It is used by `/admin/profile`, `/influencer/profile` and `/freelancer/profile`.
+
+Kept from your version: the posts grid, Discover people, the followers/following list, live counts, and the edit page at `/{role}/profile/edit`.
+
+Not copied from the dump, because it was sample text for one person (Karthik) shown to everyone: the name, bio, hashtags, `Top 1% Chennai`, `142 Bounties Done`, audience 482,400, reach 1.28M, score 94/100, revenue and wallet figures, the HDFC and UPI details, the fake IP/2FA line, and the toggles that did nothing. These now show real profile data, or zero / empty states where no backend exists (wallet, payouts).
+
+The wallet buttons link to the existing `/{role}/withdraw` screen. `Add A/C` opens the `Changeaccount` form, which does not save anywhere yet.

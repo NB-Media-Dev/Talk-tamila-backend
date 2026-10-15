@@ -11,7 +11,14 @@ from sqlalchemy.pool import StaticPool
 from app.common.models import DirectMessage, Follow, Notification, Post, PostLike, Profile, Story, User
 from app.core.database import Base
 from app.utils.db_reset import count_rows, reset_to_admin_only
-from app.utils.demo_content import DEMO_CREATORS, DEMO_POSTS, add_demo_content
+from app.utils.demo_content import (
+    DEMO_CREATORS,
+    DEMO_IMAGE_POSTS,
+    DEMO_POSTS,
+    _art_png,
+    add_demo_content,
+)
+from app.common.services.post_service import sniff_mime
 from app.utils.seed import seed_db_data
 
 
@@ -61,7 +68,7 @@ def test_demo_content_adds_creators_and_posts(fresh_db):
     reset_to_admin_only(fresh_db)
     made = add_demo_content(fresh_db, "Pass-1234")
     assert made["users"] == len(DEMO_CREATORS)
-    assert made["posts"] == len(DEMO_POSTS)
+    assert made["posts"] == len(DEMO_POSTS) + len(DEMO_IMAGE_POSTS)
     assert _count(fresh_db, User) == len(DEMO_CREATORS) + 1  # demo creators + admin
     assert _count(fresh_db, PostLike) > 0
     # Every author's post counter matches the posts that really exist.
@@ -78,7 +85,7 @@ def test_demo_content_is_not_added_twice(fresh_db):
     reset_to_admin_only(fresh_db)
     assert add_demo_content(fresh_db, "Pass-1234") is not None
     assert add_demo_content(fresh_db, "Pass-1234") is None
-    assert _count(fresh_db, Post) == len(DEMO_POSTS)
+    assert _count(fresh_db, Post) == len(DEMO_POSTS) + len(DEMO_IMAGE_POSTS)
 
 
 def test_reset_after_demo_returns_to_admin_only(fresh_db):
@@ -87,3 +94,19 @@ def test_reset_after_demo_returns_to_admin_only(fresh_db):
     reset_to_admin_only(fresh_db)
     assert _count(fresh_db, User) == 1
     assert _count(fresh_db, Post) == 0
+
+
+def test_demo_image_posts_have_real_png_media(fresh_db):
+    reset_to_admin_only(fresh_db)
+    add_demo_content(fresh_db, "Pass-1234")
+    rows = fresh_db.execute(select(Post).where(Post.post_type == "image")).scalars().all()
+    assert len(rows) == len(DEMO_IMAGE_POSTS)
+    for post in rows:
+        assert post.media_mime == "image/png"
+        assert post.media_size == len(post.media_data)
+        assert sniff_mime(post.media_data) == "image/png"
+
+
+def test_art_png_is_a_valid_png():
+    data = _art_png((255, 0, 0), (0, 0, 255), (255, 255, 0), size=32)
+    assert data[:8] == b"\x89PNG\r\n\x1a\n"

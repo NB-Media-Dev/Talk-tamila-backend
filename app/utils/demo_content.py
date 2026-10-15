@@ -11,6 +11,8 @@ empty profile, no messages, no notifications and no followers.
 """
 
 import random
+import struct
+import zlib
 from datetime import date, datetime, timedelta, timezone
 from typing import Dict, List, Optional, Tuple
 
@@ -74,6 +76,47 @@ DEMO_POSTS: List[Tuple[str, float, str, str, List[str]]] = [
     ("nisha_b", 70, "text", "Tamil captions are getting popular again, and I love it. Our own language has the best punchlines.", []),
     ("sathish_k", 76, "text", "Editors: back up your project files twice. Ask me how I learned this. 😅", []),
 ]
+
+# (author username, hours ago, caption, (top colour, bottom colour, sun colour))
+DEMO_IMAGE_POSTS: List[Tuple[str, float, str, Tuple[Tuple[int, int, int], ...]]] = [
+    ("arjun_s", 3, "Golden hour never disappoints. 🌅", ((255, 140, 66), (120, 40, 90), (255, 224, 140))),
+    ("priya_a", 7, "Sunset over the temple tank, Madurai. 🛕", ((255, 183, 77), (183, 58, 88), (255, 240, 200))),
+    ("ananya_p", 10, "Morning light on the Pondicherry promenade. 🌊", ((120, 200, 230), (20, 90, 140), (255, 250, 220))),
+    ("rohan_m", 16, "Weekend ride, no destination. 🏍️", ((90, 120, 200), (20, 30, 70), (255, 220, 120))),
+    ("amrita_i", 22, "Practice hall, 6 AM. Ghungroos ready. 💃", ((230, 90, 110), (90, 20, 60), (255, 210, 160))),
+    ("meena_d", 36, "New poster palette for a festival campaign. 🎨", ((60, 190, 170), (20, 70, 110), (255, 235, 150))),
+    ("swathi_r", 46, "Post-workout sky. Worth the early alarm. 💪", ((250, 120, 80), (60, 40, 110), (255, 230, 170))),
+    ("sathish_k", 60, "Colour grade test: teal shadows, warm skin. 🎞️", ((40, 120, 140), (15, 25, 45), (255, 190, 120))),
+]
+
+
+def _art_png(top, bottom, sun, size: int = 480) -> bytes:
+    """A small gradient picture with a sun, as PNG bytes. Needs no image library."""
+    cx, cy, radius = int(size * 0.68), int(size * 0.38), int(size * 0.14)
+    rows = bytearray()
+    for y in range(size):
+        t = y / (size - 1)
+        base = [int(top[i] + (bottom[i] - top[i]) * t) for i in range(3)]
+        row = bytearray(base * size)
+        dy = y - cy
+        if abs(dy) <= radius:
+            half = int((radius * radius - dy * dy) ** 0.5)
+            for x in range(max(0, cx - half), min(size, cx + half)):
+                row[x * 3 : x * 3 + 3] = bytes(sun)
+        rows += b"\x00" + row
+
+    def chunk(kind: bytes, data: bytes) -> bytes:
+        body = kind + data
+        return struct.pack(">I", len(data)) + body + struct.pack(">I", zlib.crc32(body) & 0xFFFFFFFF)
+
+    header = struct.pack(">IIBBBBB", size, size, 8, 2, 0, 0, 0)
+    return (
+        b"\x89PNG\r\n\x1a\n"
+        + chunk(b"IHDR", header)
+        + chunk(b"IDAT", zlib.compress(bytes(rows), 9))
+        + chunk(b"IEND", b"")
+    )
+
 
 _COMMENTS = [
     "Super! 🔥",
@@ -161,7 +204,11 @@ def add_demo_content(db: Session, password: str, seed: int = 7) -> Optional[Dict
 
     counts = {"users": len(users), "posts": 0, "likes": 0, "comments": 0, "votes": 0}
 
-    for author, hours_ago, post_type, text, options in DEMO_POSTS:
+    entries = [(a, h, t, x, o, None) for a, h, t, x, o in DEMO_POSTS]
+    for author, hours_ago, caption, colours in DEMO_IMAGE_POSTS:
+        entries.append((author, hours_ago, "image", caption, [], _art_png(*colours)))
+
+    for author, hours_ago, post_type, text, options, image in entries:
         published = now - timedelta(hours=hours_ago)
         post = Post(
             user_id=users[author].user_id,
@@ -171,6 +218,11 @@ def add_demo_content(db: Session, password: str, seed: int = 7) -> Optional[Dict
             published_at=published,
             created_at=published,
         )
+        if image is not None:
+            post.media_type = "image"
+            post.media_mime = "image/png"
+            post.media_size = len(image)
+            post.media_data = image
         db.add(post)
         for position, label in enumerate(options):
             post.poll_options.append(PostPollOption(text=label, position=position))

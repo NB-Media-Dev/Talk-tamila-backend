@@ -76,8 +76,8 @@ The script shows which database it will wipe, saves a backup in `backups/`
 The admin keeps their password. Everything else is removed, so each person who
 signs up afterwards starts with an empty account.
 
-`--with-demo` adds 12 sample creators and 24 posts (with likes, comments and
-poll votes) so the feed does not look empty. Edit `app/utils/demo_content.py` to
+`--with-demo` adds 12 sample creators and 32 posts (24 text and poll posts plus
+8 picture posts, with likes, comments and poll votes) so the feed does not look empty. Edit `app/utils/demo_content.py` to
 change who they are and what they post. The script prints their shared password
 once. Demo posts are normal data: to remove them, run the reset again without
 `--with-demo`.
